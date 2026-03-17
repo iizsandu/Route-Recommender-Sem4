@@ -1,0 +1,2 @@
+newspaper3k==0.2.8
+lxml==5.1.0
