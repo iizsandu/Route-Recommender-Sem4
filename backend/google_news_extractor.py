@@ -53,18 +53,6 @@ class GoogleNewsExtractor:
                 print(f"\n⚠️  Failed to load progress: {e}")
         return False
         
-    def extract_full_article_text(self, url: str, keyword: str = '') -> Dict:
-        """
-        Extract full article text using centralized extractor
-        
-        Args:
-            url: Article URL
-            keyword: Search keyword used
-            
-        Returns:
-            Extraction result from centralized extractor
-        """
-        return self.text_extractor.extract(url, source='Google News', keyword=keyword)
     
     def fetch_articles(self, 
                       keywords: List[str] = None,
@@ -178,7 +166,7 @@ class GoogleNewsExtractor:
                                         self.seen_urls.add(url)
                                         
                                         # Extract full text using centralized extractor
-                                        full_content = self.extract_full_article_text(url, keyword=keyword)
+                                        full_content = self.text_extractor.extract(url, source='Google News', keyword=keyword)
                                         
                                         article = {
                                             'url': full_content['url'],

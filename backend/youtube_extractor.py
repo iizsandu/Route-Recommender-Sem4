@@ -7,10 +7,28 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+FFMPEG_COMMON_PATHS = [
+    r"D:\ffmpeg-8.0.1-essentials_build\bin\ffmpeg.exe",
+    r"C:\ffmpeg\bin\ffmpeg.exe",
+    r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
+    r"C:\ProgramData\chocolatey\bin\ffmpeg.exe",
+]
+
+def _find_ffmpeg():
+    import shutil
+    path = shutil.which("ffmpeg")
+    if not path:
+        for p in FFMPEG_COMMON_PATHS:
+            if os.path.exists(p):
+                return p
+    return path or "ffmpeg"
+
+
 class YouTubeExtractor:
     def __init__(self, output_dir="news_videos"):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
+        self.ffmpeg_path = _find_ffmpeg()
         
         # Popular Indian news channels on YouTube
         self.channels = {
@@ -78,12 +96,9 @@ class YouTubeExtractor:
             "--no-playlist"
         ]
         
-        # Add ffmpeg location if found
-        if ffmpeg_path:
-            command.extend(["--ffmpeg-location", ffmpeg_path])
-            print(f"Using FFmpeg from: {ffmpeg_path}")
-        else:
-            print("⚠ Warning: ffmpeg not found in PATH or common locations")
+        if self.ffmpeg_path:
+            command.extend(["--ffmpeg-location", self.ffmpeg_path])
+            print(f"Using FFmpeg from: {self.ffmpeg_path}")
         
         try:
             print("Starting download...")
@@ -131,23 +146,6 @@ class YouTubeExtractor:
         print(f"Output: {output_path}")
         print(f"{'='*70}\n")
         
-        # Try to find ffmpeg location
-        import shutil
-        ffmpeg_path = shutil.which("ffmpeg")
-        
-        # If not found in PATH, try common locations
-        if not ffmpeg_path:
-            common_paths = [
-                r"D:\ffmpeg-8.0.1-essentials_build\bin\ffmpeg.exe",
-                r"C:\ffmpeg\bin\ffmpeg.exe",
-                r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
-                r"C:\ProgramData\chocolatey\bin\ffmpeg.exe",
-            ]
-            for path in common_paths:
-                if os.path.exists(path):
-                    ffmpeg_path = path
-                    break
-        
         command = [
             "yt-dlp",
             url,
@@ -156,12 +154,9 @@ class YouTubeExtractor:
             "--no-playlist"
         ]
         
-        # Add ffmpeg location if found
-        if ffmpeg_path:
-            command.extend(["--ffmpeg-location", ffmpeg_path])
-            print(f"Using FFmpeg from: {ffmpeg_path}")
-        else:
-            print("⚠ Warning: ffmpeg not found in PATH or common locations")
+        if self.ffmpeg_path:
+            command.extend(["--ffmpeg-location", self.ffmpeg_path])
+            print(f"Using FFmpeg from: {self.ffmpeg_path}")
         
         try:
             print("Starting download...")

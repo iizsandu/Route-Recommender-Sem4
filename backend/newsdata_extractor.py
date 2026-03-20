@@ -205,47 +205,6 @@ class NewsDataExtractor:
         
         return all_articles
     
-    def extract_full_text(self, articles: List[Dict]) -> List[Dict]:
-        """
-        Extract full text from article URLs
-        
-        Args:
-            articles: List of article dictionaries
-            
-        Returns:
-            Articles with full text extracted
-        """
-        print(f"\nExtracting full text from {len(articles)} articles...")
-        
-        extracted_count = 0
-        failed_count = 0
-        
-        for i, article in enumerate(articles, 1):
-            if i % 50 == 0:
-                print(f"  Progress: {i}/{len(articles)} articles processed...")
-            
-            try:
-                # Extract full text from URL
-                full_text = self.text_extractor.extract_text(article['url'])
-                
-                if full_text and len(full_text) > 100:
-                    article['text'] = full_text
-                    article['full_text_extracted'] = True
-                    extracted_count += 1
-                else:
-                    article['text'] = article.get('description', '')
-                    article['full_text_extracted'] = False
-                    failed_count += 1
-                    
-            except Exception as e:
-                article['text'] = article.get('description', '')
-                article['full_text_extracted'] = False
-                failed_count += 1
-        
-        print(f"✓ Full text extracted: {extracted_count}")
-        print(f"✗ Failed extractions: {failed_count}\n")
-        
-        return articles
 
 
 if __name__ == "__main__":

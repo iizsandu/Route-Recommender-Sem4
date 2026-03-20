@@ -72,63 +72,6 @@ class DBHandler:
             return 0
         return self.articles_collection.count_documents({})
     
-    def delete_all_articles(self) -> int:
-        if not self.connected:
-            return 0
-        result = self.articles_collection.delete_many({})
-        return result.deleted_count
     
-    def get_articles_by_source(self, source: str) -> List[Dict]:
-        if not self.connected:
-            return []
-        
-        articles = list(
-            self.articles_collection
-            .find({"source": source}, {"_id": 0})
-            .sort("extracted_at", -1)
-        )
-        return articles
 
-    def get_articles_without_full_text(self, limit: int = None) -> List[Dict]:
-        """Get articles that don't have full text extracted"""
-        if not self.connected:
-            return []
-        
-        query = {
-            "$or": [
-                {"text": {"$exists": False}},
-                {"text": ""},
-                {"text": None}
-            ]
-        }
-        
-        cursor = self.articles_collection.find(query, {"_id": 0})
-        
-        if limit:
-            cursor = cursor.limit(limit)
-        
-        return list(cursor)
     
-    def update_article_content(self, url: str, content: Dict) -> bool:
-        """Update article with full text content"""
-        if not self.connected:
-            return False
-        
-        try:
-            result = self.articles_collection.update_one(
-                {"url": url},
-                {
-                    "$set": {
-                        "title": content.get('title', ''),
-                        "date": content.get('date'),
-                        "text": content.get('text', ''),
-                        "summary": content.get('summary', ''),
-                        "full_text_extracted": True,
-                        "full_text_extracted_at": datetime.now().isoformat()
-                    }
-                }
-            )
-            return result.modified_count > 0
-        except Exception as e:
-            print(f"Error updating article: {e}")
-            return False
