@@ -1,243 +1,226 @@
 """
-Google News Article Extractor using GoogleNews Library
-Fetches actual article URLs (not RSS redirects) and extracts full text
-Auto-saves progress to prevent data loss on rate limits
-Uses centralized ArticleTextExtractor for all text extraction
+Google News Extractor — 3-layer approach
+Layer 1: Google News RSS (requests + BeautifulSoup XML parse)
+Layer 2: googlenewsdecoder resolves CBMi redirect URLs → real article URLs
+Layer 3: gnews library as supplementary source (also decoded via Layer 2)
+Delhi-only, crime keyword filtered.
 """
-from GoogleNews import GoogleNews
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import quote_plus
+from typing import List, Dict, Tuple
 import time
-import random
-from typing import List, Dict
-import json
-import os
 from article_text_extractor import get_extractor
 
+try:
+    from googlenewsdecoder import gnewsdecoder
+    _DECODER_AVAILABLE = True
+except ImportError:
+    _DECODER_AVAILABLE = False
+    print("  ⚠️  googlenewsdecoder not installed — Google News URLs will fail")
+
+try:
+    from gnews import GNews
+    _GNEWS_AVAILABLE = True
+except ImportError:
+    _GNEWS_AVAILABLE = False
+
+
 class GoogleNewsExtractor:
-    def __init__(self, auto_save_file: str = "google_news_progress.json"):
-        self.rate_limit_hits = 0
-        self.MAX_RATE_LIMITS = 10
-        self.auto_save_file = auto_save_file
-        self.all_articles = []
-        self.seen_urls = set()
-        # Use centralized extractor
+    def __init__(self):
         self.text_extractor = get_extractor()
-        
-    def save_progress(self):
-        """Save current progress to file"""
+        self.headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        self.crime_keywords = [
+            'crime', 'murder', 'robbery', 'theft', 'assault', 'rape', 'kidnapping',
+            'arrested', 'held', 'killed', 'dead', 'body', 'attack', 'shot', 'stabbed',
+            'police', 'accused', 'victim', 'gang', 'fraud', 'scam', 'burglary', 'loot',
+            'violence', 'shoot', 'firing', 'encounter', 'custody', 'detained',
+        ]
+        self.delhi_keywords = [
+            'delhi', 'new delhi', 'ncr', 'noida', 'gurgaon', 'gurugram',
+            'faridabad', 'dwarka', 'rohini',
+        ]
+
+    def _is_crime_related(self, title: str) -> bool:
+        return any(kw in title.lower() for kw in self.crime_keywords)
+
+    def _is_delhi_related(self, title: str, url: str = '') -> bool:
+        text = (title + ' ' + url).lower()
+        return any(kw in text for kw in self.delhi_keywords)
+
+    def _decode_google_url(self, google_url: str) -> str:
+        """Resolve a CBMi... Google News redirect to the real article URL."""
+        if not _DECODER_AVAILABLE:
+            return None
+        if 'news.google.com' not in google_url:
+            return google_url  # already a real URL
         try:
-            data = {
-                'articles': self.all_articles,
-                'seen_urls': list(self.seen_urls),
-                'total_articles': len(self.all_articles),
-                'saved_at': datetime.now().isoformat()
-            }
-            with open(self.auto_save_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, default=str)
-            print(f"\n💾 Progress saved: {len(self.all_articles)} articles")
+            result = gnewsdecoder(google_url, interval=1)
+            if result.get('status'):
+                real_url = result['decoded_url']
+                if 'news.google.com' not in real_url:
+                    return real_url
         except Exception as e:
-            print(f"\n⚠️  Failed to save progress: {e}")
-    
-    def load_progress(self) -> bool:
-        """Load previous progress if exists"""
-        if os.path.exists(self.auto_save_file):
+            print(f"    Decode error: {e}")
+        return None
+
+    def _build_article(self, url: str, fallback_title: str = '') -> Dict:
+        result = self.text_extractor.extract(url, source='Google News')
+        return {
+            'url': result['url'],
+            'title': result['title'] or fallback_title,
+            'date': result['publish_date'],
+            'text': result['text'],
+            'summary': result['summary'],
+            'source': 'Google News',
+            'extracted_at': result['extracted_at'],
+            'full_text_extracted': result['full_text_extracted'],
+        }
+
+    # ── Layer 1+2: RSS + decoder ──────────────────────────────────────────────
+
+    def extract_from_rss(self, keywords: List[str], max_articles: int, seen_urls: set) -> List[Dict]:
+        articles = []
+        print(f"\n  📡 Layer 1+2: RSS + URL decoder (max {max_articles})")
+
+        for keyword in keywords:
+            if len(articles) >= max_articles:
+                break
+            rss_url = (
+                "https://news.google.com/rss/search?q="
+                + quote_plus(keyword)
+                + "&hl=en-IN&gl=IN&ceid=IN:en"
+            )
             try:
-                with open(self.auto_save_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                self.all_articles = data.get('articles', [])
-                self.seen_urls = set(data.get('seen_urls', []))
-                print(f"\n📂 Loaded previous progress: {len(self.all_articles)} articles")
-                return True
-            except Exception as e:
-                print(f"\n⚠️  Failed to load progress: {e}")
-        return False
-        
-    
-    def fetch_articles(self, 
-                      keywords: List[str] = None,
-                      start_date: datetime = None,
-                      end_date: datetime = None,
-                      pages_per_keyword: int = 20,
-                      target_articles: int = 5000) -> List[Dict]:
-        """
-        Fetch articles from Google News using GoogleNews library
-        Auto-saves progress every 50 articles and on rate limits
-        
-        Args:
-            keywords: List of search keywords
-            start_date: Start date for article search
-            end_date: End date for article search
-            pages_per_keyword: Number of pages to fetch per keyword
-            target_articles: Target number of articles to extract
-            
-        Returns:
-            List of articles with full text extracted
-        """
-        if not keywords:
-            keywords = [
-                # Delhi crimes
-                "Delhi crime", "Delhi murder", "Delhi robbery", "Delhi theft", 
-                "Delhi assault", "Delhi rape", "Delhi kidnapping"
-                # # Mumbai crimes
-                # "Mumbai crime", "Mumbai murder", "Mumbai robbery", "Mumbai theft",
-                # # Bangalore crimes
-                # "Bangalore crime", "Bangalore murder", "Bangalore robbery",
-                # # Chennai crimes
-                # "Chennai crime", "Chennai murder", "Chennai robbery",
-                # # Kolkata crimes
-                # "Kolkata crime", "Kolkata murder", "Kolkata robbery",
-                # # Hyderabad crimes
-                # "Hyderabad crime", "Hyderabad murder", "Hyderabad robbery",
-                # # General India
-                # "India crime news", "India murder", "India robbery",
-                # "India violent crime", "India theft"
-            ]
-        
-        if not start_date:
-            start_date = datetime(2025, 6, 1)  # Extended date range
-        
-        if not end_date:
-            end_date = datetime(2026, 3, 1)
-        
-        # Load previous progress if exists
-        self.load_progress()
-        
-        print(f"\n{'='*70}")
-        print(f"Google News Article Extraction - Target: {target_articles} articles")
-        print(f"{'='*70}")
-        print(f"Keywords: {len(keywords)}")
-        print(f"Date Range: {start_date.strftime('%m/%d/%Y')} to {end_date.strftime('%m/%d/%Y')}")
-        print(f"Pages per keyword: {pages_per_keyword}")
-        print(f"Starting with: {len(self.all_articles)} existing articles")
-        print(f"{'='*70}\n")
-        
-        current_date = start_date
-        save_counter = 0
-        
-        try:
-            while current_date < end_date and len(self.all_articles) < target_articles:
-                next_month = current_date + relativedelta(months=1)
-                period_start = current_date.strftime('%m/%d/%Y')
-                period_end = next_month.strftime('%m/%d/%Y')
-                
-                print(f"\n📅 Period: {period_start} to {period_end}")
-                print(f"Progress: {len(self.all_articles)}/{target_articles} articles")
-                print(f"{'='*70}\n")
-                
-                for keyword in keywords:
-                    if self.rate_limit_hits >= self.MAX_RATE_LIMITS:
-                        print("\n⚠️  Rate limit threshold reached. Saving and stopping...")
-                        self.save_progress()
-                        return self.all_articles
-                    
-                    if len(self.all_articles) >= target_articles:
-                        print(f"\n✓ Target reached: {len(self.all_articles)} articles")
-                        self.save_progress()
-                        return self.all_articles
-                    
-                    print(f"🔍 Searching: '{keyword}'")
-                    
-                    try:
-                        googlenews = GoogleNews(lang='en')
-                        googlenews.set_time_range(period_start, period_end)
-                        googlenews.search(keyword)
-                        
-                        for page in range(1, pages_per_keyword + 1):
-                            if len(self.all_articles) >= target_articles:
-                                break
-                            
-                            print(f"  📄 Page {page}/{pages_per_keyword}...", end=" ")
-                            
-                            try:
-                                googlenews.get_page(page)
-                                results = googlenews.results()
-                                
-                                if not results:
-                                    print("No results")
-                                    time.sleep(10)
-                                    continue
-                                
-                                new_articles = 0
-                                for news in results:
-                                    url = news.get('link', '')
-                                    
-                                    if url and url not in self.seen_urls:
-                                        self.seen_urls.add(url)
-                                        
-                                        # Extract full text using centralized extractor
-                                        full_content = self.text_extractor.extract(url, source='Google News', keyword=keyword)
-                                        
-                                        article = {
-                                            'url': full_content['url'],
-                                            'title': full_content['title'] or news.get('title', ''),
-                                            'date': full_content['publish_date'],
-                                            'text': full_content['text'],
-                                            'summary': full_content['summary'],
-                                            'source': 'Google News',
-                                            'keyword': keyword,
-                                            'extracted_at': full_content['extracted_at'],
-                                            'full_text_extracted': full_content['full_text_extracted']
-                                        }
-                                        
-                                        self.all_articles.append(article)
-                                        new_articles += 1
-                                        save_counter += 1
-                                        
-                                        # Auto-save every 50 articles
-                                        if save_counter >= 50:
-                                            self.save_progress()
-                                            save_counter = 0
-                                
-                                print(f"✓ {len(results)} results, {new_articles} new (Total: {len(self.all_articles)})")
-                                
-                                # Rate limiting
-                                sleep_time = random.uniform(3, 7)
-                                time.sleep(sleep_time)
-                                
-                            except Exception as e:
-                                print(f"✗ Error: {str(e)[:40]}")
-                                self.rate_limit_hits += 1
-                                wait = random.uniform(30, 60)
-                                print(f"  ⏳ Sleeping {wait:.1f}s... (Rate limit hits: {self.rate_limit_hits})")
-                                
-                                # Save before long wait
-                                self.save_progress()
-                                time.sleep(wait)
-                                
-                                if self.rate_limit_hits >= self.MAX_RATE_LIMITS:
-                                    break
-                        
-                        print(f"  ✓ Completed '{keyword}': {len(self.all_articles)} total articles\n")
-                        
-                    except Exception as e:
-                        print(f"  ✗ Error with keyword '{keyword}': {e}\n")
-                        self.save_progress()
+                resp = requests.get(rss_url, headers=self.headers, timeout=15)
+                if resp.status_code != 200:
+                    print(f"    RSS {resp.status_code} for '{keyword}'")
+                    continue
+
+                soup = BeautifulSoup(resp.content, 'xml')
+                items = soup.find_all('item')
+                print(f"  Keyword '{keyword}': {len(items)} RSS items")
+
+                new_kw = 0
+                for item in items:
+                    if len(articles) >= max_articles:
+                        break
+                    title_tag = item.find('title')
+                    link_tag  = item.find('link')
+                    title = title_tag.text.strip() if title_tag else ''
+                    google_url = link_tag.text.strip() if link_tag else ''
+
+                    if not google_url or not self._is_crime_related(title):
                         continue
-                
-                if self.rate_limit_hits >= self.MAX_RATE_LIMITS:
-                    break
-                
-                current_date = next_month
-        
-        except KeyboardInterrupt:
-            print("\n\n⚠️  Interrupted by user. Saving progress...")
-            self.save_progress()
-            return self.all_articles
-        
-        except Exception as e:
-            print(f"\n\n⚠️  Unexpected error: {e}. Saving progress...")
-            self.save_progress()
-            return self.all_articles
-        
-        # Final save
-        self.save_progress()
-        
-        print(f"\n{'='*70}")
-        print(f"Extraction Complete!")
-        print(f"{'='*70}")
-        print(f"Total unique articles fetched: {len(self.all_articles)}")
-        print(f"Articles with full text: {sum(1 for a in self.all_articles if a['full_text_extracted'])}")
-        print(f"{'='*70}\n")
-        
-        return self.all_articles
+
+                    # Layer 2: decode redirect → real URL
+                    real_url = self._decode_google_url(google_url)
+                    if not real_url:
+                        continue
+
+                    real_url = self.text_extractor.clean_url(real_url)
+                    if real_url in seen_urls:
+                        continue
+
+                    seen_urls.add(real_url)
+                    print(f"    Extracting: {real_url[:80]}...")
+                    articles.append(self._build_article(real_url, title))
+                    new_kw += 1
+                    time.sleep(1)
+
+                print(f"    → {new_kw} new articles from '{keyword}'")
+                time.sleep(1)
+
+            except Exception as e:
+                print(f"    RSS error for '{keyword}': {e}")
+
+        print(f"  ✓ RSS+decoder: {len(articles)} articles")
+        return articles
+
+    # ── Layer 3: gnews library ────────────────────────────────────────────────
+
+    def extract_from_gnews(self, keywords: List[str], max_articles: int, seen_urls: set) -> List[Dict]:
+        if not _GNEWS_AVAILABLE:
+            print("  ⚠️  gnews not available, skipping Layer 3")
+            return []
+
+        articles = []
+        print(f"\n  📰 Layer 3: gnews library (max {max_articles})")
+
+        gn = GNews(language='en', country='IN', max_results=10)
+
+        for keyword in keywords:
+            if len(articles) >= max_articles:
+                break
+            try:
+                results = gn.get_news(keyword)
+                print(f"  Keyword '{keyword}': {len(results)} gnews results")
+
+                new_kw = 0
+                for item in results:
+                    if len(articles) >= max_articles:
+                        break
+                    title = item.get('title', '')
+                    google_url = item.get('url', '')
+
+                    if not google_url or not self._is_crime_related(title):
+                        continue
+
+                    # gnews also returns CBMi URLs — decode them
+                    real_url = self._decode_google_url(google_url)
+                    if not real_url:
+                        continue
+
+                    real_url = self.text_extractor.clean_url(real_url)
+                    if real_url in seen_urls:
+                        continue
+
+                    seen_urls.add(real_url)
+                    print(f"    Extracting: {real_url[:80]}...")
+                    articles.append(self._build_article(real_url, title))
+                    new_kw += 1
+                    time.sleep(1)
+
+                print(f"    → {new_kw} new articles from '{keyword}'")
+                time.sleep(1)
+
+            except Exception as e:
+                print(f"    gnews error for '{keyword}': {e}")
+
+        print(f"  ✓ gnews: {len(articles)} articles")
+        return articles
+
+    # ── Combined ──────────────────────────────────────────────────────────────
+
+    def extract(self, keywords: List[str], max_articles: int = 200, seen_urls: set = None) -> List[Dict]:
+        """
+        Both layers run independently and contribute to the total.
+        Layer 1+2 (RSS+decoder) and Layer 3 (gnews) each run over all keywords.
+        seen_urls deduplicates across both so there's no overlap.
+        max_articles is a soft cap — both layers run fully, combined total is capped.
+        """
+        if seen_urls is None:
+            seen_urls = set()
+        all_articles = []
+
+        print(f"\n{'='*60}")
+        print(f"📰 Google News Extraction (max {max_articles})")
+        print(f"{'='*60}")
+
+        # Layer 1+2: RSS + decoder — runs fully over all keywords
+        rss_articles = self.extract_from_rss(keywords, max_articles, seen_urls)
+        all_articles.extend(rss_articles)
+
+        # Layer 3: gnews — runs independently over all keywords
+        # seen_urls already contains RSS results so no duplicates
+        gnews_articles = self.extract_from_gnews(keywords, max_articles, seen_urls)
+        all_articles.extend(gnews_articles)
+
+        text_ok = sum(1 for a in all_articles if a.get('full_text_extracted'))
+        print(f"\n{'='*60}")
+        print(f"✓ Google News Total : {len(all_articles)} articles")
+        print(f"✓  Layer 1+2 (RSS)  : {len(rss_articles)}")
+        print(f"✓  Layer 3 (gnews)  : {len(gnews_articles)}")
+        print(f"✓ Text found        : {text_ok}/{len(all_articles)}")
+        print(f"{'='*60}")
+        return all_articles

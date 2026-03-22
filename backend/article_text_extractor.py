@@ -6,6 +6,7 @@ Used as an API by all other extractors before database storage
 from newspaper import Article
 from datetime import datetime
 from typing import Dict, Optional
+import requests as _requests
 
 class ArticleTextExtractor:
     """
@@ -44,6 +45,25 @@ class ArticleTextExtractor:
         
         return url
     
+    def _try_newspaper_download(self, article: Article) -> bool:
+        """Attempt newspaper's built-in download. Returns True if HTML was fetched."""
+        try:
+            article.download()
+            # newspaper swallows errors — check if HTML actually landed
+            return bool(article.html and len(article.html) > 500)
+        except Exception:
+            return False
+
+    def _try_requests_download(self, url: str, article: Article) -> bool:
+        """Fallback: fetch HTML with requests and inject into newspaper."""
+        try:
+            resp = _requests.get(url, headers=self.headers, timeout=15)
+            resp.raise_for_status()
+            article.set_html(resp.text)
+            return True
+        except Exception:
+            return False
+
     def extract(self, url: str, source: Optional[str] = None, keyword: Optional[str] = None) -> Dict:
         """
         Extract full article text from URL
@@ -77,20 +97,27 @@ class ArticleTextExtractor:
         clean_url = self.clean_url(url)
         
         try:
-            # Create and configure article
             article = Article(clean_url)
-            
-            # Download article HTML
-            article.download()
-            
-            # Parse article content
+
+            # Stage 1: newspaper's own downloader
+            downloaded = self._try_newspaper_download(article)
+
+            # Stage 2: fallback to requests if newspaper failed or returned empty HTML
+            if not downloaded:
+                print(f"  ⚠️  newspaper download failed, trying requests fallback...")
+                downloaded = self._try_requests_download(clean_url, article)
+
+            if not downloaded:
+                raise Exception("Both newspaper and requests download failed")
+
             article.parse()
-            
-            # Perform NLP (summary, keywords)
             article.nlp()
-            
-            # Build standardized result
-            result = {
+
+            # Checkpoint: reject articles with no meaningful text
+            if not article.text or len(article.text.strip()) < 100:
+                raise Exception(f"Extracted text too short ({len(article.text.strip()) if article.text else 0} chars) — page may be paywalled or JS-rendered")
+
+            return {
                 'url': clean_url,
                 'title': article.title or '',
                 'authors': article.authors or [],
@@ -103,11 +130,9 @@ class ArticleTextExtractor:
                 'keyword': keyword or '',
                 'extracted_at': datetime.now().isoformat(),
                 'full_text_extracted': True,
-                'text_length': len(article.text) if article.text else 0,
+                'text_length': len(article.text),
                 'error': None
             }
-            
-            return result
             
         except Exception as e:
             # Return failed result with error

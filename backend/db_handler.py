@@ -23,9 +23,24 @@ class DBHandler:
     
     def _create_indexes(self):
         try:
-            self.articles_collection.create_index([("url", ASCENDING)], unique=True, sparse=True)
+            existing = self.articles_collection.index_information()
+            # Drop url_1 if it exists (handles spec conflicts or duplicate data blocking rebuild)
+            if 'url_1' in existing:
+                try:
+                    self.articles_collection.drop_index('url_1')
+                except Exception:
+                    pass
+            # Remove duplicate URLs before creating unique index
+            pipeline = [
+                {"$group": {"_id": "$url", "ids": {"$push": "$_id"}, "count": {"$sum": 1}}},
+                {"$match": {"count": {"$gt": 1}}}
+            ]
+            for doc in self.articles_collection.aggregate(pipeline):
+                # Keep the first, delete the rest
+                ids_to_delete = doc["ids"][1:]
+                self.articles_collection.delete_many({"_id": {"$in": ids_to_delete}})
+            self.articles_collection.create_index([("url", ASCENDING)], unique=True, sparse=True, name="url_1")
             self.articles_collection.create_index([("extracted_at", ASCENDING)])
-            print(f"  ✓ Unique index on 'url' ensured for {self.collection_name}")
         except Exception as e:
             print(f"  Index creation note: {e}")
     

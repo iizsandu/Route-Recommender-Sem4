@@ -2,11 +2,15 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
+import threading
 from toi_extractor import ArticleExtractor
 from db_handler import DBHandler
 from youtube_pipeline import YouTubePipeline
 
 app = FastAPI(title="Delhi Crime Data Collector")
+
+# Global cancel event — set this to stop any running extraction
+_cancel_event = threading.Event()
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,13 +36,14 @@ async def health_check():
 @app.get("/articles/stats")
 async def get_article_stats():
     try:
-        articles_count = db_handler.get_article_count()
-        db2 = DBHandler(collection_name="articles2")
-        articles2_count = db2.get_article_count()
+        db_toi   = DBHandler(collection_name="articles")
+        db_main  = DBHandler(collection_name="articles2")
+        toi_count  = db_toi.get_article_count()
+        main_count = db_main.get_article_count()
         return {
-            "articles":  {"total": articles_count,  "collection": "articles",  "source": "Times of India"},
-            "articles2": {"total": articles2_count, "collection": "articles2", "source": "Google News / NewsData"},
-            "total": articles_count + articles2_count
+            "articles":  {"total": toi_count,  "collection": "articles",  "source": "Times of India"},
+            "articles2": {"total": main_count, "collection": "articles2", "source": "All Sources"},
+            "total": toi_count + main_count
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -55,11 +60,18 @@ async def get_articles2(limit: int = 50, skip: int = 0):
 
 # ── Extraction Endpoints ───────────────────────────────────────────────────────
 
+@app.post("/articles/cancel-extraction")
+async def cancel_extraction():
+    _cancel_event.set()
+    return {"success": True, "message": "Cancellation signal sent. Extraction will stop and save progress shortly."}
+
+
 @app.post("/articles/extract-all")
 async def extract_all_articles(timeout_minutes: Optional[int] = 120):
     try:
+        _cancel_event.clear()
         from unified_extractor import UnifiedExtractor
-        extractor = UnifiedExtractor(auto_save_interval=50)
+        extractor = UnifiedExtractor(auto_save_interval=50, cancel_event=_cancel_event)
         result = extractor.extract_indefinitely(timeout_minutes=timeout_minutes)
         return {
             "success": True,
@@ -79,8 +91,9 @@ async def extract_all_articles(timeout_minutes: Optional[int] = 120):
 @app.post("/articles/extract-google-news")
 async def extract_google_news_only(timeout_minutes: Optional[int] = 60):
     try:
+        _cancel_event.clear()
         from unified_extractor import UnifiedExtractor
-        extractor = UnifiedExtractor(auto_save_interval=50)
+        extractor = UnifiedExtractor(auto_save_interval=50, cancel_event=_cancel_event)
         extractor.load_progress()
         keywords = [
             "Delhi crime", "Delhi murder", "Delhi robbery", "Delhi theft",
@@ -88,7 +101,7 @@ async def extract_google_news_only(timeout_minutes: Optional[int] = 60):
             "Delhi police arrest", "Delhi gang", "Delhi violence",
             "New Delhi crime", "NCR crime", "Noida crime", "Gurgaon crime",
         ]
-        count = extractor.extract_from_google_news(keywords, pages_per_keyword=20)
+        count = extractor.extract_from_google_news(keywords, max_articles=200)
         extractor.save_progress()
         return {"success": True, "message": "Google News extraction completed",
                 "stats": {"method": "Google News", "new_articles": count, "total_urls": len(extractor.seen_urls)}}
@@ -99,13 +112,59 @@ async def extract_google_news_only(timeout_minutes: Optional[int] = 60):
 @app.post("/articles/extract-times-of-india")
 async def extract_times_of_india_only(max_articles: Optional[int] = 200):
     try:
+        _cancel_event.clear()
         from unified_extractor import UnifiedExtractor
-        extractor = UnifiedExtractor(auto_save_interval=50)
+        extractor = UnifiedExtractor(auto_save_interval=50, cancel_event=_cancel_event)
         extractor.load_progress()
         count = extractor.extract_from_times_of_india(max_articles=max_articles)
         extractor.save_progress()
         return {"success": True, "message": "Times of India extraction completed",
                 "stats": {"method": "Times of India", "new_articles": count, "total_urls": len(extractor.seen_urls)}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/articles/extract-hindu")
+async def extract_hindu_only(max_articles: Optional[int] = 200):
+    try:
+        _cancel_event.clear()
+        from unified_extractor import UnifiedExtractor
+        extractor = UnifiedExtractor(auto_save_interval=50, cancel_event=_cancel_event)
+        extractor.load_progress()
+        count = extractor.extract_from_hindu(max_articles=max_articles)
+        extractor.save_progress()
+        return {"success": True, "message": "The Hindu extraction completed",
+                "stats": {"method": "The Hindu", "new_articles": count, "total_urls": len(extractor.seen_urls)}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/articles/extract-ndtv")
+async def extract_ndtv_only(max_articles: Optional[int] = 200):
+    try:
+        _cancel_event.clear()
+        from unified_extractor import UnifiedExtractor
+        extractor = UnifiedExtractor(auto_save_interval=50, cancel_event=_cancel_event)
+        extractor.load_progress()
+        count = extractor.extract_from_ndtv(max_articles=max_articles)
+        extractor.save_progress()
+        return {"success": True, "message": "NDTV extraction completed",
+                "stats": {"method": "NDTV", "new_articles": count, "total_urls": len(extractor.seen_urls)}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/articles/extract-indian-express")
+async def extract_indian_express_only(max_articles: Optional[int] = 200):
+    try:
+        _cancel_event.clear()
+        from unified_extractor import UnifiedExtractor
+        extractor = UnifiedExtractor(auto_save_interval=50, cancel_event=_cancel_event)
+        extractor.load_progress()
+        count = extractor.extract_from_indian_express(max_articles=max_articles)
+        extractor.save_progress()
+        return {"success": True, "message": "Indian Express extraction completed",
+                "stats": {"method": "Indian Express", "new_articles": count, "total_urls": len(extractor.seen_urls)}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -130,7 +189,8 @@ async def extract_newsdata_only(max_credits: Optional[int] = 200):
         if max_credits > available:
             max_credits = available
 
-        extractor = UnifiedExtractor(auto_save_interval=50)
+        _cancel_event.clear()
+        extractor = UnifiedExtractor(auto_save_interval=50, cancel_event=_cancel_event)
         extractor.load_progress()
         count = extractor.extract_from_newsdata(max_credits=max_credits)
         extractor.save_progress()

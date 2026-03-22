@@ -6,6 +6,9 @@ Uses centralized ArticleTextExtractor for all text extraction
 from google_news_extractor import GoogleNewsExtractor
 from toi_extractor import ArticleExtractor
 from newsdata_extractor import NewsDataExtractor
+from hindu_extractor import HinduExtractor
+from ndtv_extractor import NDTVExtractor
+from indian_express_extractor import IndianExpressExtractor
 from db_handler import DBHandler
 from datetime import datetime
 import time
@@ -15,12 +18,16 @@ from typing import List, Dict
 from article_text_extractor import get_extractor
 
 class UnifiedExtractor:
-    def __init__(self, auto_save_interval: int = 50):
+    def __init__(self, auto_save_interval: int = 50, cancel_event=None):
         self.google_news_extractor = GoogleNewsExtractor()
         self.times_of_india_extractor = ArticleExtractor()
         self.newsdata_extractor = NewsDataExtractor()
-        self.text_extractor = get_extractor()  # Centralized extractor
+        self.hindu_extractor = HinduExtractor()
+        self.ndtv_extractor = NDTVExtractor()
+        self.indian_express_extractor = IndianExpressExtractor()
+        self.text_extractor = get_extractor()
         self.auto_save_interval = auto_save_interval
+        self.cancel_event = cancel_event
         self.all_articles = []
         self.seen_urls = set()
         self.save_counter = 0
@@ -72,91 +79,24 @@ class UnifiedExtractor:
                 print(f"\n⚠️  Failed to load progress: {e}")
         return False
     
-    def extract_from_google_news(self, keywords: List[str], pages_per_keyword: int = 20) -> int:
-        """Extract from Google News - returns count of new articles"""
-        print(f"\n{'='*70}")
-        print(f"🔍 Google News Extraction")
-        print(f"{'='*70}")
-        
-        new_count = 0
-        
-        for keyword in keywords:
-            if self.error_count >= self.max_errors:
-                print(f"\n⚠️  Too many errors ({self.error_count}). Stopping Google News extraction.")
-                break
-            
-            try:
-                print(f"\n🔍 Keyword: '{keyword}'")
-                
-                from GoogleNews import GoogleNews
-                import random
-                
-                googlenews = GoogleNews(lang='en')
-                googlenews.search(keyword)
-                
-                for page in range(1, pages_per_keyword + 1):
-                    try:
-                        googlenews.get_page(page)
-                        results = googlenews.results()
-                        
-                        if not results:
-                            print(f"  Page {page}: No results")
-                            break
-                        
-                        page_new = 0
-                        for news in results:
-                            url = news.get('link', '')
-                            
-                            # Clean URL using centralized extractor
-                            clean_url = self.text_extractor.clean_url(url)
-                            
-                            if clean_url and clean_url not in self.seen_urls:
-                                self.seen_urls.add(clean_url)
-                                
-                                # Extract full text using centralized extractor
-                                full_content = self.text_extractor.extract(clean_url, source='Google News', keyword=keyword)
-                                
-                                article = {
-                                    'url': full_content['url'],
-                                    'title': full_content['title'] or news.get('title', ''),
-                                    'date': full_content['publish_date'],
-                                    'text': full_content['text'],
-                                    'summary': full_content['summary'],
-                                    'source': 'Google News',
-                                    'keyword': keyword,
-                                    'extracted_at': full_content['extracted_at'],
-                                    'full_text_extracted': full_content['full_text_extracted']
-                                }
-                                
-                                self.all_articles.append(article)
-                                page_new += 1
-                                new_count += 1
-                                self.save_counter += 1
-                                
-                                # Auto-save at interval
-                                if self.save_counter >= self.auto_save_interval:
-                                    self.save_progress()
-                        
-                        print(f"  Page {page}: {len(results)} results, {page_new} new (Total: {len(self.seen_urls)})")
-                        
-                        # Rate limiting
-                        time.sleep(random.uniform(2, 5))
-                        
-                        # Reset error count on success
-                        self.error_count = 0
-                        
-                    except Exception as e:
-                        print(f"  Page {page}: Error - {str(e)[:50]}")
-                        self.error_count += 1
-                        time.sleep(10)
-                        break
-                
-            except Exception as e:
-                print(f"  Keyword error: {str(e)[:50]}")
-                self.error_count += 1
-                continue
-        
-        return new_count
+    def extract_from_google_news(self, keywords: List[str], max_articles: int = 200) -> int:
+        """Extract from Google News (RSS + decoder + gnews) - returns count of new articles"""
+        if self.cancel_event and self.cancel_event.is_set():
+            return 0
+        try:
+            articles = self.google_news_extractor.extract(
+                keywords=keywords,
+                max_articles=max_articles,
+                seen_urls=set(self.seen_urls)
+            )
+            count = self._ingest_articles(articles)
+            print(f"✓ Google News: {count} new articles")
+            self.error_count = 0
+            return count
+        except Exception as e:
+            print(f"✗ Google News error: {str(e)[:80]}")
+            self.error_count += 1
+            return 0
     
     def extract_from_times_of_india(self, max_articles: int = 100) -> int:
         """Extract from Times of India - returns count of new articles"""
@@ -170,6 +110,12 @@ class UnifiedExtractor:
             articles = self.times_of_india_extractor.extract_from_times_of_india(max_articles=max_articles)
             
             for article in articles:
+                # Check cancellation
+                if self.cancel_event and self.cancel_event.is_set():
+                    print(f"\n🛑 Cancellation requested. Saving progress...")
+                    self.save_progress()
+                    return new_count
+
                 url = article.get('url', '')
                 
                 # Clean URL using centralized extractor
@@ -198,6 +144,72 @@ class UnifiedExtractor:
         
         return new_count
     
+    def _ingest_articles(self, articles: List[Dict]) -> int:
+        """Deduplicate against seen_urls, append to batch, trigger auto-save. Returns new count."""
+        new_count = 0
+        for article in articles:
+            if self.cancel_event and self.cancel_event.is_set():
+                self.save_progress()
+                return new_count
+            url = self.text_extractor.clean_url(article.get('url', ''))
+            if url and url not in self.seen_urls:
+                self.seen_urls.add(url)
+                article['url'] = url
+                self.all_articles.append(article)
+                new_count += 1
+                self.save_counter += 1
+                if self.save_counter >= self.auto_save_interval:
+                    self.save_progress()
+        return new_count
+
+    def extract_from_hindu(self, max_articles: int = 200) -> int:
+        """Extract from The Hindu RSS - returns count of new articles"""
+        print(f"\n{'='*70}")
+        print(f"📰 The Hindu Extraction")
+        print(f"{'='*70}")
+        try:
+            articles = self.hindu_extractor.extract(max_articles=max_articles, seen_urls=set(self.seen_urls))
+            count = self._ingest_articles(articles)
+            print(f"✓ The Hindu: {count} new articles")
+            self.error_count = 0
+            return count
+        except Exception as e:
+            print(f"✗ The Hindu error: {str(e)[:80]}")
+            self.error_count += 1
+            return 0
+
+    def extract_from_ndtv(self, max_articles: int = 200) -> int:
+        """Extract from NDTV RSS - returns count of new articles"""
+        print(f"\n{'='*70}")
+        print(f"📰 NDTV Extraction")
+        print(f"{'='*70}")
+        try:
+            articles = self.ndtv_extractor.extract(max_articles=max_articles, seen_urls=set(self.seen_urls))
+            count = self._ingest_articles(articles)
+            print(f"✓ NDTV: {count} new articles")
+            self.error_count = 0
+            return count
+        except Exception as e:
+            print(f"✗ NDTV error: {str(e)[:80]}")
+            self.error_count += 1
+            return 0
+
+    def extract_from_indian_express(self, max_articles: int = 200) -> int:
+        """Extract from Indian Express RSS - returns count of new articles"""
+        print(f"\n{'='*70}")
+        print(f"📰 Indian Express Extraction")
+        print(f"{'='*70}")
+        try:
+            articles = self.indian_express_extractor.extract(max_articles=max_articles, seen_urls=set(self.seen_urls))
+            count = self._ingest_articles(articles)
+            print(f"✓ Indian Express: {count} new articles")
+            self.error_count = 0
+            return count
+        except Exception as e:
+            print(f"✗ Indian Express error: {str(e)[:80]}")
+            self.error_count += 1
+            return 0
+
     def extract_from_newsdata(self, max_credits: int = 200) -> int:
         """Extract from NewsData.io - returns count of new articles"""
         print(f"\n{'='*70}")
@@ -218,6 +230,12 @@ class UnifiedExtractor:
             
             # Extract full text from URLs
             for i, article in enumerate(articles, 1):
+                # Check cancellation
+                if self.cancel_event and self.cancel_event.is_set():
+                    print(f"\n🛑 Cancellation requested. Saving progress...")
+                    self.save_progress()
+                    return new_count
+
                 url = article.get('url', '')
                 
                 # Clean URL using centralized extractor
@@ -341,28 +359,49 @@ class UnifiedExtractor:
                     remaining = (timeout_seconds - elapsed) / 60
                     print(f"Time remaining: {remaining:.1f} minutes")
                 
+                # Check cancellation
+                if self.cancel_event and self.cancel_event.is_set():
+                    print(f"\n🛑 Cancellation requested. Saving progress...")
+                    self.save_progress()
+                    break
+                
                 # Check error threshold
                 if self.error_count >= self.max_errors:
                     print(f"\n⚠️  Too many consecutive errors ({self.error_count}). Stopping extraction.")
                     break
                 
                 # Method 1: Google News
-                print(f"\n📍 Method 1/3: Google News")
-                gn_count = self.extract_from_google_news(google_news_keywords, pages_per_keyword=10)
+                print(f"\n📍 Method 1/6: Google News")
+                gn_count = self.extract_from_google_news(google_news_keywords, max_articles=200)
                 total_extracted += gn_count
-                
+
                 # Method 2: Times of India
-                print(f"\n📍 Method 2/3: Times of India")
+                print(f"\n📍 Method 2/6: Times of India")
                 toi_count = self.extract_from_times_of_india(max_articles=100)
                 total_extracted += toi_count
-                
-                # Method 3: NewsData.io (only in first cycle to use all 200 credits at once)
+
+                # Method 3: The Hindu
+                print(f"\n📍 Method 3/6: The Hindu")
+                hindu_count = self.extract_from_hindu(max_articles=200)
+                total_extracted += hindu_count
+
+                # Method 4: NDTV
+                print(f"\n📍 Method 4/6: NDTV")
+                ndtv_count = self.extract_from_ndtv(max_articles=200)
+                total_extracted += ndtv_count
+
+                # Method 5: Indian Express
+                print(f"\n📍 Method 5/6: Indian Express")
+                ie_count = self.extract_from_indian_express(max_articles=200)
+                total_extracted += ie_count
+
+                # Method 6: NewsData.io (only in first cycle)
                 if cycle_count == 1:
-                    print(f"\n📍 Method 3/3: NewsData.io")
+                    print(f"\n📍 Method 6/6: NewsData.io")
                     nd_count = self.extract_from_newsdata(max_credits=200)
                     total_extracted += nd_count
                 else:
-                    print(f"\n📍 Method 3/3: NewsData.io (skipped - already used in cycle 1)")
+                    print(f"\n📍 Method 6/6: NewsData.io (skipped - already used in cycle 1)")
                     nd_count = 0
                 
                 cycle_new = len(self.seen_urls) - cycle_start

@@ -4,6 +4,10 @@ import {
   extractGoogleNews,
   extractTimesOfIndia,
   extractNewsData,
+  extractHindu,
+  extractNDTV,
+  extractIndianExpress,
+  cancelExtraction,
   getNewsDataCredits,
   getArticles, 
   getArticles2, 
@@ -15,6 +19,7 @@ function ArticleExtractor() {
   const [articles, setArticles] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [extractionMethod, setExtractionMethod] = useState('all');
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
@@ -66,6 +71,16 @@ function ArticleExtractor() {
     }
   };
 
+  const handleCancel = async () => {
+    setCancelling(true);
+    try {
+      await cancelExtraction();
+      setSuccessMessage('Cancellation signal sent. Waiting for extraction to stop and save...');
+    } catch (err) {
+      setError('Failed to send cancel signal: ' + err.message);
+    }
+  };
+
   const handleExtract = async () => {
       setLoading(true);
       setError('');
@@ -83,14 +98,26 @@ function ArticleExtractor() {
             setSuccessMessage('Starting Times of India extraction...');
             result = await extractTimesOfIndia();
             break;
+          case 'hindu':
+            setSuccessMessage('Starting The Hindu extraction...');
+            result = await extractHindu();
+            break;
+          case 'ndtv':
+            setSuccessMessage('Starting NDTV extraction...');
+            result = await extractNDTV();
+            break;
+          case 'ie':
+            setSuccessMessage('Starting Indian Express extraction...');
+            result = await extractIndianExpress();
+            break;
           case 'newsdata':
             setSuccessMessage('Starting NewsData.io extraction (200 credits)...');
             result = await extractNewsData();
             break;
           case 'all':
           default:
-            setSuccessMessage('Starting extraction using ALL methods (Google News + Times of India + NewsData.io)... Running for 2 hours with auto-save every 50 articles.');
-            result = await extractArticles(120); // 2 hour timeout
+            setSuccessMessage('Starting extraction using ALL methods... Auto-save every 50 articles.');
+            result = await extractArticles(120);
             break;
         }
 
@@ -123,6 +150,7 @@ function ArticleExtractor() {
         setError(err.message || 'Failed to extract articles');
       } finally {
         setLoading(false);
+        setCancelling(false);
       }
     };
 
@@ -141,11 +169,14 @@ function ArticleExtractor() {
             onChange={(e) => setExtractionMethod(e.target.value)}
             disabled={loading}
           >
-            <option value="all">All Methods (Google News + Times of India + NewsData.io)</option>
-            <option value="google">Google News Only</option>
-            <option value="toi">Times of India Only</option>
+            <option value="all">All Methods (6 sources)</option>
+            <option value="google">Google News</option>
+            <option value="toi">Times of India</option>
+            <option value="hindu">The Hindu</option>
+            <option value="ndtv">NDTV</option>
+            <option value="ie">Indian Express</option>
             <option value="newsdata">
-              NewsData.io Only 
+              NewsData.io
               {newsDataCredits && ` (${newsDataCredits.credits_remaining}/${newsDataCredits.max_credits} credits)`}
             </option>
           </select>
@@ -177,6 +208,16 @@ function ArticleExtractor() {
           {loading ? 'Extracting Articles...' : 'Extract Articles'}
         </button>
 
+        {loading && (
+          <button
+            onClick={handleCancel}
+            disabled={cancelling}
+            className="cancel-button"
+          >
+            {cancelling ? 'Cancelling...' : 'Cancel Extraction'}
+          </button>
+        )}
+
         <div className="collection-toggle">
           <label>View Collection: </label>
           <select 
@@ -185,7 +226,7 @@ function ArticleExtractor() {
             className="collection-select"
           >
             <option value="articles2">
-              Google News (articles2){stats?.articles2?.total ? ` - ${stats.articles2.total} articles` : ''}
+              All Sources (articles2){stats?.articles2?.total ? ` - ${stats.articles2.total} articles` : ''}
             </option>
             <option value="articles">
               Times of India (articles){stats?.articles?.total ? ` - ${stats.articles.total} articles` : ''}
@@ -200,7 +241,7 @@ function ArticleExtractor() {
               <span className="stat-value">{stats.total || 0}</span>
             </div>
             <div className="stat-item">
-              <span className="stat-label">Google News (articles2):</span>
+              <span className="stat-label">All Sources (articles2):</span>
               <span className="stat-value">{stats.articles2?.total || 0}</span>
             </div>
             <div className="stat-item">

@@ -71,6 +71,42 @@ export const getArticles2 = async (limit = 50, skip = 0) => {
   }
 };
 
+export const extractHindu = async () => {
+  try {
+    const response = await axios.post(`${API_BASE_URL}/articles/extract-hindu`);
+    return response.data;
+  } catch (error) {
+    throw new Error(error.response?.data?.detail || 'Failed to extract from The Hindu');
+  }
+};
+
+export const extractNDTV = async () => {
+  try {
+    const response = await axios.post(`${API_BASE_URL}/articles/extract-ndtv`);
+    return response.data;
+  } catch (error) {
+    throw new Error(error.response?.data?.detail || 'Failed to extract from NDTV');
+  }
+};
+
+export const extractIndianExpress = async () => {
+  try {
+    const response = await axios.post(`${API_BASE_URL}/articles/extract-indian-express`);
+    return response.data;
+  } catch (error) {
+    throw new Error(error.response?.data?.detail || 'Failed to extract from Indian Express');
+  }
+};
+
+export const cancelExtraction = async () => {
+  try {
+    const response = await axios.post(`${API_BASE_URL}/articles/cancel-extraction`);
+    return response.data;
+  } catch (error) {
+    throw new Error(error.response?.data?.detail || 'Failed to cancel extraction');
+  }
+};
+
 export const getArticleStats = async () => {
   try {
     const response = await axios.get(`${API_BASE_URL}/articles/stats`);
