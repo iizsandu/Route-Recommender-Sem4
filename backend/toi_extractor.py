@@ -2,8 +2,8 @@
 Times of India Article Extractor
 Two-method approach:
   1. RSS feeds  — fast, reliable, direct URLs (Delhi News + India News)
-  2. Web scrape — crawls TOI Delhi/crime topic pages as fallback/supplement
-Both methods filter by crime keywords and deduplicate by URL.
+  2. Web scrape — crawls TOI Delhi/crime topic pages, paginates until no new crime links or HTTP error
+Both methods filter by crime keywords and deduplicate by URL. No article cap.
 """
 import requests
 import feedparser
@@ -25,12 +25,10 @@ class ArticleExtractor:
             'police', 'accused', 'victim', 'gang', 'fraud', 'scam', 'burglary', 'loot',
             'violence', 'shoot', 'firing', 'encounter', 'custody', 'detained', 'arrested'
         ]
-        # RSS feeds — direct article URLs, no redirect issues
         self.rss_feeds = [
             ("Delhi News",  "https://timesofindia.indiatimes.com/rssfeeds/-2128839596.cms"),
             ("India News",  "https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms"),
         ]
-        # Web scrape fallback pages
         self.toi_delhi_urls = [
             "https://timesofindia.indiatimes.com/city/delhi",
             "https://timesofindia.indiatimes.com/topic/delhi-crime",
@@ -58,18 +56,15 @@ class ArticleExtractor:
 
     # ── Method 1: RSS ─────────────────────────────────────────────────────────
 
-    def extract_from_rss(self, max_articles: int = 100, seen_urls: set = None) -> List[Dict]:
-        """Extract crime articles from TOI RSS feeds."""
+    def extract_from_rss(self, seen_urls: set = None) -> List[Dict]:
+        """Extract all crime articles from TOI RSS feeds (naturally bounded by feed size)."""
         if seen_urls is None:
             seen_urls = set()
         articles = []
 
-        print(f"\n  📡 RSS extraction (max {max_articles})")
+        print(f"\n  📡 RSS extraction")
 
         for feed_name, feed_url in self.rss_feeds:
-            if len(articles) >= max_articles:
-                break
-
             print(f"  Feed: {feed_name}")
             try:
                 feed = feedparser.parse(feed_url)
@@ -77,15 +72,11 @@ class ArticleExtractor:
                 print(f"    {len(entries)} entries found")
 
                 for entry in entries:
-                    if len(articles) >= max_articles:
-                        break
-
                     title = entry.get('title', '')
                     url = entry.get('link', '')
 
                     if not url or url in seen_urls:
                         continue
-
                     if not self._is_crime_related(title):
                         continue
 
@@ -103,31 +94,29 @@ class ArticleExtractor:
 
     # ── Method 2: Web Scrape ──────────────────────────────────────────────────
 
-    def extract_from_web(self, max_articles: int = 100, seen_urls: set = None) -> List[Dict]:
-        """Extract crime articles by scraping TOI Delhi/crime topic pages."""
+    def extract_from_web(self, seen_urls: set = None) -> List[Dict]:
+        """Scrape TOI Delhi/crime pages. Stops when no new crime links found or HTTP error."""
         if seen_urls is None:
             seen_urls = set()
         articles = []
 
-        print(f"\n  🌐 Web scrape extraction (max {max_articles})")
+        print(f"\n  🌐 Web scrape extraction")
 
         for page_url in self.toi_delhi_urls:
-            if len(articles) >= max_articles:
-                break
-
             print(f"  Page: {page_url}")
             try:
                 response = requests.get(page_url, headers=self.headers, timeout=10)
+                if response.status_code == 429:
+                    print(f"    ⚠️  Rate limited (429) — stopping web scrape")
+                    return articles
                 if response.status_code != 200:
-                    print(f"    ✗ HTTP {response.status_code}")
+                    print(f"    ✗ HTTP {response.status_code} — skipping")
                     continue
 
                 soup = BeautifulSoup(response.content, 'html.parser')
+                page_links = []
 
                 for link in soup.find_all('a', href=True):
-                    if len(articles) >= max_articles:
-                        break
-
                     href = link.get('href', '')
                     title = link.get_text(strip=True)
 
@@ -140,8 +129,16 @@ class ArticleExtractor:
 
                     if full_url in seen_urls:
                         continue
-                    seen_urls.add(full_url)
+                    if self.text_extractor.is_video_url(full_url):
+                        continue
+                    page_links.append((full_url, title))
 
+                print(f"    New crime links: {len(page_links)}")
+                if not page_links:
+                    continue
+
+                for full_url, title in page_links:
+                    seen_urls.add(full_url)
                     print(f"    Extracting: {full_url[:80]}...")
                     article = self._build_article(full_url, fallback_title=title)
                     articles.append(article)
@@ -155,33 +152,24 @@ class ArticleExtractor:
 
     # ── Combined ──────────────────────────────────────────────────────────────
 
-    def extract_from_times_of_india(self, max_articles: int = 200) -> List[Dict]:
+    def extract_from_times_of_india(self) -> List[Dict]:
         """
         Run RSS first, then web scrape for additional articles.
         Shared seen_urls set ensures no duplicates across both methods.
+        No article cap — runs until exhausted or rate-limited.
         """
         print(f"\n{'='*60}")
-        print(f"📰 Times of India Extraction (max {max_articles})")
+        print(f"📰 Times of India Extraction")
         print(f"{'='*60}")
 
         seen_urls = set()
         all_articles = []
 
-        # Method 1: RSS
-        rss_articles = self.extract_from_rss(
-            max_articles=max_articles,
-            seen_urls=seen_urls
-        )
+        rss_articles = self.extract_from_rss(seen_urls=seen_urls)
         all_articles.extend(rss_articles)
 
-        # Method 2: Web scrape (only if we still need more)
-        remaining = max_articles - len(all_articles)
-        if remaining > 0:
-            web_articles = self.extract_from_web(
-                max_articles=remaining,
-                seen_urls=seen_urls
-            )
-            all_articles.extend(web_articles)
+        web_articles = self.extract_from_web(seen_urls=seen_urls)
+        all_articles.extend(web_articles)
 
         text_ok = sum(1 for a in all_articles if a.get('full_text_extracted'))
         print(f"\n{'='*60}")

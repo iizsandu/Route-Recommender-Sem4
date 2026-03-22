@@ -3,12 +3,12 @@ Google News Extractor — 3-layer approach
 Layer 1: Google News RSS (requests + BeautifulSoup XML parse)
 Layer 2: googlenewsdecoder resolves CBMi redirect URLs → real article URLs
 Layer 3: gnews library as supplementary source (also decoded via Layer 2)
-Delhi-only, crime keyword filtered.
+Delhi-only, crime keyword filtered. No article cap — runs until exhausted or rate-limited.
 """
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import quote_plus
-from typing import List, Dict, Tuple
+from typing import List, Dict
 import time
 from article_text_extractor import get_extractor
 
@@ -79,13 +79,12 @@ class GoogleNewsExtractor:
 
     # ── Layer 1+2: RSS + decoder ──────────────────────────────────────────────
 
-    def extract_from_rss(self, keywords: List[str], max_articles: int, seen_urls: set) -> List[Dict]:
+    def extract_from_rss(self, keywords: List[str], seen_urls: set) -> List[Dict]:
+        """Fetch all RSS results for every keyword. Stops only on HTTP error."""
         articles = []
-        print(f"\n  📡 Layer 1+2: RSS + URL decoder (max {max_articles})")
+        print(f"\n  📡 Layer 1+2: RSS + URL decoder")
 
         for keyword in keywords:
-            if len(articles) >= max_articles:
-                break
             rss_url = (
                 "https://news.google.com/rss/search?q="
                 + quote_plus(keyword)
@@ -93,8 +92,11 @@ class GoogleNewsExtractor:
             )
             try:
                 resp = requests.get(rss_url, headers=self.headers, timeout=15)
+                if resp.status_code == 429:
+                    print(f"    ⚠️  Rate limited (429) on '{keyword}' — stopping RSS")
+                    break
                 if resp.status_code != 200:
-                    print(f"    RSS {resp.status_code} for '{keyword}'")
+                    print(f"    RSS {resp.status_code} for '{keyword}' — skipping")
                     continue
 
                 soup = BeautifulSoup(resp.content, 'xml')
@@ -103,8 +105,6 @@ class GoogleNewsExtractor:
 
                 new_kw = 0
                 for item in items:
-                    if len(articles) >= max_articles:
-                        break
                     title_tag = item.find('title')
                     link_tag  = item.find('link')
                     title = title_tag.text.strip() if title_tag else ''
@@ -112,8 +112,9 @@ class GoogleNewsExtractor:
 
                     if not google_url or not self._is_crime_related(title):
                         continue
+                    if self.text_extractor.is_video_url(google_url):
+                        continue
 
-                    # Layer 2: decode redirect → real URL
                     real_url = self._decode_google_url(google_url)
                     if not real_url:
                         continue
@@ -139,34 +140,32 @@ class GoogleNewsExtractor:
 
     # ── Layer 3: gnews library ────────────────────────────────────────────────
 
-    def extract_from_gnews(self, keywords: List[str], max_articles: int, seen_urls: set) -> List[Dict]:
+    def extract_from_gnews(self, keywords: List[str], seen_urls: set) -> List[Dict]:
+        """Fetch all gnews results for every keyword. Stops only on error."""
         if not _GNEWS_AVAILABLE:
             print("  ⚠️  gnews not available, skipping Layer 3")
             return []
 
         articles = []
-        print(f"\n  📰 Layer 3: gnews library (max {max_articles})")
+        print(f"\n  📰 Layer 3: gnews library")
 
-        gn = GNews(language='en', country='IN', max_results=10)
+        gn = GNews(language='en', country='IN', max_results=100)
 
         for keyword in keywords:
-            if len(articles) >= max_articles:
-                break
             try:
                 results = gn.get_news(keyword)
                 print(f"  Keyword '{keyword}': {len(results)} gnews results")
 
                 new_kw = 0
                 for item in results:
-                    if len(articles) >= max_articles:
-                        break
                     title = item.get('title', '')
                     google_url = item.get('url', '')
 
                     if not google_url or not self._is_crime_related(title):
                         continue
+                    if self.text_extractor.is_video_url(google_url):
+                        continue
 
-                    # gnews also returns CBMi URLs — decode them
                     real_url = self._decode_google_url(google_url)
                     if not real_url:
                         continue
@@ -192,28 +191,23 @@ class GoogleNewsExtractor:
 
     # ── Combined ──────────────────────────────────────────────────────────────
 
-    def extract(self, keywords: List[str], max_articles: int = 200, seen_urls: set = None) -> List[Dict]:
+    def extract(self, keywords: List[str], seen_urls: set = None) -> List[Dict]:
         """
-        Both layers run independently and contribute to the total.
-        Layer 1+2 (RSS+decoder) and Layer 3 (gnews) each run over all keywords.
-        seen_urls deduplicates across both so there's no overlap.
-        max_articles is a soft cap — both layers run fully, combined total is capped.
+        Both layers run independently over all keywords until exhausted or rate-limited.
+        seen_urls deduplicates across both layers.
         """
         if seen_urls is None:
             seen_urls = set()
         all_articles = []
 
         print(f"\n{'='*60}")
-        print(f"📰 Google News Extraction (max {max_articles})")
+        print(f"📰 Google News Extraction")
         print(f"{'='*60}")
 
-        # Layer 1+2: RSS + decoder — runs fully over all keywords
-        rss_articles = self.extract_from_rss(keywords, max_articles, seen_urls)
+        rss_articles = self.extract_from_rss(keywords, seen_urls)
         all_articles.extend(rss_articles)
 
-        # Layer 3: gnews — runs independently over all keywords
-        # seen_urls already contains RSS results so no duplicates
-        gnews_articles = self.extract_from_gnews(keywords, max_articles, seen_urls)
+        gnews_articles = self.extract_from_gnews(keywords, seen_urls)
         all_articles.extend(gnews_articles)
 
         text_ok = sum(1 for a in all_articles if a.get('full_text_extracted'))

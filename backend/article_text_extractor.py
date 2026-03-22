@@ -20,30 +20,24 @@ class ArticleTextExtractor:
         }
     
     def clean_url(self, url: str) -> str:
-        """
-        Clean URL by removing tracking parameters
-        
-        Args:
-            url: Raw URL with potential tracking parameters
-            
-        Returns:
-            Cleaned URL without tracking parameters
-        """
+        """Clean URL by removing tracking parameters."""
         if not url:
             return url
-        
-        # Remove common tracking parameters
+
         tracking_params = [
             '&ved=', '&usg=', '&sa=', '&source=', '&cd=', '&cad=',
             '&utm_source=', '&utm_medium=', '&utm_campaign=',
             '&fbclid=', '&gclid='
         ]
-        
         for param in tracking_params:
             if param in url:
                 url = url.split(param)[0]
-        
         return url
+
+    def is_video_url(self, url: str) -> bool:
+        """Return True for YouTube/video URLs that have no article text to extract."""
+        video_patterns = ['youtube.com', 'youtu.be', 'youtube.com/watch']
+        return any(p in url.lower() for p in video_patterns)
     
     def _try_newspaper_download(self, article: Article) -> bool:
         """Attempt newspaper's built-in download. Returns True if HTML was fetched."""
@@ -95,6 +89,17 @@ class ArticleTextExtractor:
         """
         # Clean URL first
         clean_url = self.clean_url(url)
+
+        # Reject video URLs — no article text to extract
+        if self.is_video_url(clean_url):
+            return {
+                'url': clean_url, 'title': '', 'authors': [], 'publish_date': None,
+                'text': '', 'summary': '', 'keywords': [], 'top_image': '',
+                'source': source or 'Unknown', 'keyword': keyword or '',
+                'extracted_at': datetime.now().isoformat(),
+                'full_text_extracted': False, 'text_length': 0,
+                'error': 'Skipped: YouTube/video URL'
+            }
         
         try:
             article = Article(clean_url)

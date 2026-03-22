@@ -1,8 +1,8 @@
 """
 The Indian Express Extractor — RSS + Web Scrape
-RSS  : Delhi (200 entries), India (200 entries)
-Scrape: indianexpress.com/section/cities/delhi/ with pagination
-Delhi-only, crime keyword filtered, 1.5s delay, 30s timeout (slow server).
+RSS  : Delhi, India feeds (naturally bounded by feed size)
+Scrape: indianexpress.com/section/cities/delhi/ — paginates until no new crime links or HTTP error
+Delhi-only, crime keyword filtered, 1.5s delay, 30s timeout (slow server). No article cap.
 """
 import feedparser
 import requests
@@ -29,7 +29,6 @@ class IndianExpressExtractor:
             ("IE - India",  "https://indianexpress.com/section/india/feed/"),
         ]
         self.scrape_base_url = "https://indianexpress.com/section/cities/delhi/page/{page}/"
-        self.max_pages = 5
 
     def _is_crime_related(self, title: str) -> bool:
         return any(kw in title.lower() for kw in self.crime_keywords)
@@ -49,20 +48,16 @@ class IndianExpressExtractor:
 
     # ── Method 1: RSS ─────────────────────────────────────────────────────────
 
-    def extract_from_rss(self, max_articles: int, seen_urls: set) -> List[Dict]:
+    def extract_from_rss(self, seen_urls: set) -> List[Dict]:
         articles = []
-        print(f"\n  📡 RSS extraction (max {max_articles})")
+        print(f"\n  📡 RSS extraction")
 
         for feed_name, feed_url in self.rss_feeds:
-            if len(articles) >= max_articles:
-                break
             print(f"  Feed: {feed_name}")
             try:
                 feed = feedparser.parse(feed_url)
                 print(f"    {len(feed.entries)} entries found")
                 for entry in feed.entries:
-                    if len(articles) >= max_articles:
-                        break
                     title = entry.get('title', '')
                     url = entry.get('link', '')
                     if not url or url in seen_urls:
@@ -81,17 +76,20 @@ class IndianExpressExtractor:
 
     # ── Method 2: Web Scrape ──────────────────────────────────────────────────
 
-    def extract_from_web(self, max_articles: int, seen_urls: set) -> List[Dict]:
+    def extract_from_web(self, seen_urls: set) -> List[Dict]:
+        """Paginate until no new crime links found on a page or HTTP error."""
         articles = []
-        print(f"\n  🌐 Web scrape extraction (max {max_articles})")
+        print(f"\n  🌐 Web scrape extraction")
 
-        for page in range(1, self.max_pages + 1):
-            if len(articles) >= max_articles:
-                break
+        page = 1
+        while True:
             url = self.scrape_base_url.format(page=page)
             print(f"  Page {page}: {url}")
             try:
                 resp = requests.get(url, headers=self.headers, timeout=30)
+                if resp.status_code == 429:
+                    print(f"    ⚠️  Rate limited (429) — stopping pagination")
+                    break
                 if resp.status_code != 200:
                     print(f"    HTTP {resp.status_code} — stopping pagination")
                     break
@@ -122,18 +120,21 @@ class IndianExpressExtractor:
 
                 print(f"    Delhi links: {all_delhi} | already seen: {skipped_seen} | not crime: {skipped_crime} | new crime: {len(page_links)}")
 
+                if not page_links:
+                    print(f"    No new crime links — stopping pagination")
+                    break
+
                 seen_page = set()
                 for href, title in page_links:
                     if href in seen_page:
                         continue
                     seen_page.add(href)
-                    if len(articles) >= max_articles:
-                        break
                     seen_urls.add(href)
                     print(f"    Extracting: {href[:80]}...")
                     articles.append(self._build_article(href, title))
                     time.sleep(1.5)
 
+                page += 1
                 time.sleep(2)
             except Exception as e:
                 print(f"    Scrape error (page {page}): {e}")
@@ -144,22 +145,21 @@ class IndianExpressExtractor:
 
     # ── Combined ──────────────────────────────────────────────────────────────
 
-    def extract(self, max_articles: int = 200, seen_urls: set = None) -> List[Dict]:
+    def extract(self, seen_urls: set = None) -> List[Dict]:
+        """Run RSS then web scrape. No article cap — stops when exhausted or rate-limited."""
         if seen_urls is None:
             seen_urls = set()
         all_articles = []
 
         print(f"\n{'='*60}")
-        print(f"📰 Indian Express Extraction (max {max_articles})")
+        print(f"📰 Indian Express Extraction")
         print(f"{'='*60}")
 
-        rss_articles = self.extract_from_rss(max_articles, seen_urls)
+        rss_articles = self.extract_from_rss(seen_urls)
         all_articles.extend(rss_articles)
 
-        remaining = max_articles - len(all_articles)
-        if remaining > 0:
-            web_articles = self.extract_from_web(remaining, seen_urls)
-            all_articles.extend(web_articles)
+        web_articles = self.extract_from_web(seen_urls)
+        all_articles.extend(web_articles)
 
         text_ok = sum(1 for a in all_articles if a.get('full_text_extracted'))
         print(f"\n{'='*60}")

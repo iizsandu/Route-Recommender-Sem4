@@ -22,7 +22,7 @@ app.add_middleware(
 
 # Initialize
 article_extractor = ArticleExtractor()
-db_handler = DBHandler()
+db_handler = DBHandler(skip_indexes=True)
 youtube_pipeline = YouTubePipeline()
 
 
@@ -36,15 +36,23 @@ async def health_check():
 @app.get("/articles/stats")
 async def get_article_stats():
     try:
-        db_toi   = DBHandler(collection_name="articles")
-        db_main  = DBHandler(collection_name="articles2")
-        toi_count  = db_toi.get_article_count()
-        main_count = db_main.get_article_count()
-        return {
-            "articles":  {"total": toi_count,  "collection": "articles",  "source": "Times of India"},
-            "articles2": {"total": main_count, "collection": "articles2", "source": "All Sources"},
-            "total": toi_count + main_count
+        import re
+        db = DBHandler(collection_name="articles2", skip_indexes=True)
+        if not db.connected:
+            raise Exception("MongoDB not connected")
+        col = db.articles_collection
+
+        total = col.count_documents({})
+        breakdown = {
+            "Google News":     col.count_documents({"source": "Google News"}),
+            "Times of India":  col.count_documents({"source": "Times of India"}),
+            "The Hindu":       col.count_documents({"source": "The Hindu"}),
+            "NDTV":            col.count_documents({"source": "NDTV"}),
+            "Indian Express":  col.count_documents({"source": "Indian Express"}),
+            "NewsData.io":     col.count_documents({"source": re.compile(r"^NewsData\.io")}),
         }
+
+        return {"total": total, "breakdown": breakdown}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -52,7 +60,7 @@ async def get_article_stats():
 @app.get("/articles2")
 async def get_articles2(limit: int = 50, skip: int = 0):
     try:
-        db2 = DBHandler(collection_name="articles2")
+        db2 = DBHandler(collection_name="articles2", skip_indexes=True)
         return {"articles": db2.get_articles(limit, skip), "total": db2.get_article_count(), "limit": limit, "skip": skip}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -81,7 +89,8 @@ async def extract_all_articles(timeout_minutes: Optional[int] = 120):
                 "total_urls": result['total_urls'],
                 "total_extracted": result['total_extracted'],
                 "elapsed_minutes": round(result['elapsed_minutes'], 1),
-                "error_count": result['error_count']
+                "error_count": result['error_count'],
+                "source_breakdown": result['source_breakdown'],
             }
         }
     except Exception as e:
@@ -101,70 +110,85 @@ async def extract_google_news_only(timeout_minutes: Optional[int] = 60):
             "Delhi police arrest", "Delhi gang", "Delhi violence",
             "New Delhi crime", "NCR crime", "Noida crime", "Gurgaon crime",
         ]
-        count = extractor.extract_from_google_news(keywords, max_articles=200)
+        count = extractor.extract_from_google_news(keywords)
         extractor.save_progress()
+        extractor._print_summary()
         return {"success": True, "message": "Google News extraction completed",
-                "stats": {"method": "Google News", "new_articles": count, "total_urls": len(extractor.seen_urls)}}
+                "stats": {"method": "Google News", "new_articles": count,
+                          "total_urls": len(extractor.seen_urls),
+                          "source_breakdown": extractor.source_counts}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/articles/extract-times-of-india")
-async def extract_times_of_india_only(max_articles: Optional[int] = 200):
+async def extract_times_of_india_only():
     try:
         _cancel_event.clear()
         from unified_extractor import UnifiedExtractor
         extractor = UnifiedExtractor(auto_save_interval=50, cancel_event=_cancel_event)
         extractor.load_progress()
-        count = extractor.extract_from_times_of_india(max_articles=max_articles)
+        count = extractor.extract_from_times_of_india()
         extractor.save_progress()
+        extractor._print_summary()
         return {"success": True, "message": "Times of India extraction completed",
-                "stats": {"method": "Times of India", "new_articles": count, "total_urls": len(extractor.seen_urls)}}
+                "stats": {"method": "Times of India", "new_articles": count,
+                          "total_urls": len(extractor.seen_urls),
+                          "source_breakdown": extractor.source_counts}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/articles/extract-hindu")
-async def extract_hindu_only(max_articles: Optional[int] = 200):
+async def extract_hindu_only():
     try:
         _cancel_event.clear()
         from unified_extractor import UnifiedExtractor
         extractor = UnifiedExtractor(auto_save_interval=50, cancel_event=_cancel_event)
         extractor.load_progress()
-        count = extractor.extract_from_hindu(max_articles=max_articles)
+        count = extractor.extract_from_hindu()
         extractor.save_progress()
+        extractor._print_summary()
         return {"success": True, "message": "The Hindu extraction completed",
-                "stats": {"method": "The Hindu", "new_articles": count, "total_urls": len(extractor.seen_urls)}}
+                "stats": {"method": "The Hindu", "new_articles": count,
+                          "total_urls": len(extractor.seen_urls),
+                          "source_breakdown": extractor.source_counts}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/articles/extract-ndtv")
-async def extract_ndtv_only(max_articles: Optional[int] = 200):
+async def extract_ndtv_only():
     try:
         _cancel_event.clear()
         from unified_extractor import UnifiedExtractor
         extractor = UnifiedExtractor(auto_save_interval=50, cancel_event=_cancel_event)
         extractor.load_progress()
-        count = extractor.extract_from_ndtv(max_articles=max_articles)
+        count = extractor.extract_from_ndtv()
         extractor.save_progress()
+        extractor._print_summary()
         return {"success": True, "message": "NDTV extraction completed",
-                "stats": {"method": "NDTV", "new_articles": count, "total_urls": len(extractor.seen_urls)}}
+                "stats": {"method": "NDTV", "new_articles": count,
+                          "total_urls": len(extractor.seen_urls),
+                          "source_breakdown": extractor.source_counts}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/articles/extract-indian-express")
-async def extract_indian_express_only(max_articles: Optional[int] = 200):
+async def extract_indian_express_only():
     try:
         _cancel_event.clear()
         from unified_extractor import UnifiedExtractor
         extractor = UnifiedExtractor(auto_save_interval=50, cancel_event=_cancel_event)
         extractor.load_progress()
-        count = extractor.extract_from_indian_express(max_articles=max_articles)
+        count = extractor.extract_from_indian_express()
         extractor.save_progress()
+        extractor._print_summary()
         return {"success": True, "message": "Indian Express extraction completed",
-                "stats": {"method": "Indian Express", "new_articles": count, "total_urls": len(extractor.seen_urls)}}
+                "stats": {"method": "Indian Express", "new_articles": count,
+                          "total_urls": len(extractor.seen_urls),
+                          "source_breakdown": extractor.source_counts}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -176,13 +200,18 @@ async def extract_newsdata_only(max_credits: Optional[int] = 200):
         from newsdata_credit_manager import credit_manager
 
         status = credit_manager.get_status()
-        if not status['can_use']:
+        if status['credits_remaining'] <= 0:
             return {
                 "success": False,
-                "message": f"No credits available. Reset in {status['hours_until_reset']}h {status['minutes_until_reset']}m",
-                "stats": {"method": "NewsData.io", "credits_remaining": 0,
-                          "hours_until_reset": status['hours_until_reset'],
-                          "minutes_until_reset": status['minutes_until_reset']}
+                "message": f"No daily credits left. Reset in {status['hours_until_reset']}h {status['minutes_until_reset']}m",
+                "stats": {
+                    "method": "NewsData.io",
+                    "credits_remaining": 0,
+                    "hours_until_reset": status['hours_until_reset'],
+                    "minutes_until_reset": status['minutes_until_reset'],
+                    "window_remaining": status['window_remaining'],
+                    "window_wait_seconds": status['window_wait_seconds'],
+                }
             }
 
         available = status['credits_remaining']
@@ -196,16 +225,21 @@ async def extract_newsdata_only(max_credits: Optional[int] = 200):
         extractor.save_progress()
 
         final_status = credit_manager.get_status()
+        extractor._print_summary()
         return {
             "success": True,
             "message": "NewsData.io extraction completed",
             "stats": {
-                "method": "NewsData.io", "new_articles": count,
+                "method": "NewsData.io",
+                "new_articles": count,
                 "total_urls": len(extractor.seen_urls),
                 "credits_used": max_credits,
                 "credits_remaining": final_status['credits_remaining'],
                 "hours_until_reset": final_status['hours_until_reset'],
-                "minutes_until_reset": final_status['minutes_until_reset']
+                "minutes_until_reset": final_status['minutes_until_reset'],
+                "window_remaining": final_status['window_remaining'],
+                "window_wait_seconds": final_status['window_wait_seconds'],
+                "source_breakdown": extractor.source_counts,
             }
         }
     except Exception as e:
@@ -216,7 +250,8 @@ async def extract_newsdata_only(max_credits: Optional[int] = 200):
 async def get_newsdata_credits():
     try:
         from newsdata_credit_manager import credit_manager
-        return {"success": True, "credits": credit_manager.get_status()}
+        status = credit_manager.get_status()
+        return {"success": True, "credits": status}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

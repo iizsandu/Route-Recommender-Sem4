@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import List, Dict, Optional
 
 class DBHandler:
-    def __init__(self, mongo_url: str = "mongodb://localhost:27017/", collection_name: str = "articles"):
+    def __init__(self, mongo_url: str = "mongodb://localhost:27017/", collection_name: str = "articles", skip_indexes: bool = False):
         self.connected = False
         self.client = None
         self.db = None
@@ -15,7 +15,8 @@ class DBHandler:
             self.client.server_info()
             self.db = self.client["crime2"]
             self.articles_collection = self.db[collection_name]
-            self._create_indexes()
+            if not skip_indexes:
+                self._create_indexes()
             self.connected = True
             print(f" Connected to crime2.{collection_name}")
         except Exception as e:
