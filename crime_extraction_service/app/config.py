@@ -25,7 +25,11 @@ class Settings(BaseSettings):
     # Ollama (fallback)
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
-    
+
+    # Geocoding
+    google_geocoding_api_key: str = ""
+    geocoding_monthly_budget: int = 8000  # hard cap on Google API calls per month
+
     # Service
     service_name: str = "crime_extraction_service"
     log_level: str = "INFO"

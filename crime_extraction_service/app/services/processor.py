@@ -1,9 +1,11 @@
 """
-Main processing service that orchestrates extraction pipeline
+Orchestrates the full pipeline:
+  MongoDB article → LLM extraction → geocoding → Cosmos DB storage
 """
 from typing import Dict
-from app.services.llm_extractor import LLMExtractor
-from app.services.validator import CrimeValidator
+from app.services.llm_extractor import extract_crime_info
+from app.services.validator import build_crime_record
+from app.services.geocoder import normalize_location, geocode
 from app.db.mongodb import mongodb_client
 from app.db.cosmosdb import cosmosdb_client
 from app.utils.logger import get_logger
@@ -11,110 +13,92 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-class CrimeProcessor:
-    """Orchestrates the crime extraction pipeline"""
-    
-    def __init__(self):
-        self.extractor = LLMExtractor()
-        self.validator = CrimeValidator()
-    
-    async def process_batch(self, limit: int = 10) -> Dict:
-        """
-        Process a batch of articles
-        
-        Args:
-            limit: Number of articles to process
-            
-        Returns:
-            Dictionary with processing statistics
-        """
-        logger.info("batch_processing_started", limit=limit)
-        
-        stats = {
-            "processed": 0,
-            "successful": 0,
-            "failed": 0,
-            "errors": []
-        }
-        
-        try:
-            # Fetch unprocessed articles
-            articles = await mongodb_client.fetch_unprocessed_articles(limit)
-            
-            if not articles:
-                logger.warning("no_articles_found")
-                return stats
-            
-            stats["processed"] = len(articles)
-            
-            # Process each article
-            for article in articles:
-                article_id = str(article.get("_id", "unknown"))
-                article_text = article.get("text", "")
-                
-                try:
-                    # Extract crime information using LLM
-                    extracted_data = await self.extractor.extract_crime_info(article_text)
-                    
-                    if not extracted_data:
-                        logger.warning(
-                            "extraction_failed",
-                            article_id=article_id
-                        )
-                        stats["failed"] += 1
-                        stats["errors"].append(f"Extraction failed for article {article_id}")
-                        continue
-                    
-                    # Validate extracted data
-                    crime = await self.validator.validate_crime(extracted_data, article_id)
-                    
-                    if not crime:
-                        logger.warning(
-                            "validation_failed",
-                            article_id=article_id
-                        )
-                        stats["failed"] += 1
-                        stats["errors"].append(f"Validation failed for article {article_id}")
-                        continue
-                    
-                    # Store in Cosmos DB
-                    success = await cosmosdb_client.insert_crime_record(crime)
-                    
-                    if success:
-                        stats["successful"] += 1
-                        # Mark article as processed in MongoDB
-                        await mongodb_client.mark_article_processed(article_id)
-                    else:
-                        stats["failed"] += 1
-                        stats["errors"].append(f"Cosmos DB insert failed for article {article_id}")
-                    
-                except Exception as e:
-                    logger.error(
-                        "article_processing_error",
-                        article_id=article_id,
-                        error=str(e),
-                        error_type=type(e).__name__
-                    )
-                    stats["failed"] += 1
-                    stats["errors"].append(f"Error processing article {article_id}: {str(e)}")
-            
-            logger.info(
-                "batch_processing_completed",
-                processed=stats["processed"],
-                successful=stats["successful"],
-                failed=stats["failed"]
-            )
-            
-        except Exception as e:
-            logger.error(
-                "batch_processing_error",
-                error=str(e),
-                error_type=type(e).__name__
-            )
-            stats["errors"].append(f"Batch processing error: {str(e)}")
-        
+async def process_batch(limit: int = 10, reprocess: bool = False) -> Dict:
+    """
+    Fetch up to `limit` articles from MongoDB, extract crime info, geocode, store in Cosmos DB.
+    If reprocess=False, skips articles already marked processed=True.
+    """
+    stats = {"processed": 0, "successful": 0, "failed": 0, "skipped": 0, "errors": []}
+
+    articles = await mongodb_client.fetch_unprocessed_articles(limit, reprocess=reprocess)
+    if not articles:
+        logger.warning("no_articles_to_process")
         return stats
 
+    stats["processed"] = len(articles)
 
-# Global processor instance
-processor = CrimeProcessor()
+    for article in articles:
+        url = article.get("url", "")
+        article_text = article.get("full_text") or article.get("text") or ""
+        article_id = str(article.get("_id", ""))
+
+        # Pull publish date from DB — try common field names, normalize to ISO string
+        raw_date = article.get("published_date") or article.get("date") or article.get("scraped_at")
+        article_date = None
+        if raw_date:
+            try:
+                if hasattr(raw_date, "isoformat"):
+                    article_date = raw_date.date().isoformat()
+                else:
+                    # string — strip time portion if present
+                    article_date = str(raw_date)[:10]
+            except Exception:
+                article_date = None
+
+        if not url:
+            logger.warning("article_missing_url", article_id=article_id)
+            stats["skipped"] += 1
+            continue
+
+        if not article_text.strip():
+            logger.warning("article_empty_text", url=url[:60])
+            stats["skipped"] += 1
+            continue
+
+        try:
+            # 1. LLM extraction — pass article publish date as anchor
+            llm_data = extract_crime_info(article_text, article_date)
+            if not llm_data:
+                logger.warning("llm_extraction_failed", url=url[:60])
+                stats["failed"] += 1
+                stats["errors"].append(f"LLM failed: {url[:80]}")
+                continue
+
+            # 2. Geocoding — exact first, broad as fallback
+            loc_exact = llm_data.get("location_exact")
+            loc_broad = llm_data.get("location_broad")
+            coords = geocode(loc_exact, loc_broad)
+
+            # Track which location string was actually resolved
+            loc_exact_norm = normalize_location(loc_exact) if loc_exact else None
+            loc_broad_norm = normalize_location(loc_broad) if loc_broad else None
+            location_used = loc_exact_norm or loc_broad_norm
+
+            # 3. Build record
+            record = build_crime_record(url, llm_data, location_used, coords)
+            if not record:
+                stats["failed"] += 1
+                continue
+
+            # 4. Store in Cosmos DB
+            success = await cosmosdb_client.upsert_crime_record(record)
+            if success:
+                stats["successful"] += 1
+                await mongodb_client.mark_article_processed(article_id)
+            else:
+                stats["failed"] += 1
+                stats["errors"].append(f"Cosmos insert failed: {url[:80]}")
+
+        except Exception as e:
+            logger.error("article_processing_error", url=url[:60], error=str(e))
+            stats["failed"] += 1
+            stats["errors"].append(f"Error ({url[:60]}): {str(e)}")
+
+    logger.info(
+        "batch_done",
+        processed=stats["processed"],
+        successful=stats["successful"],
+        failed=stats["failed"],
+        skipped=stats["skipped"],
+    )
+    return stats
