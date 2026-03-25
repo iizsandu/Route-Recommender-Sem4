@@ -98,6 +98,24 @@ export const extractIndianExpress = async () => {
   }
 };
 
+export const extractNewsAPI = async () => {
+  try {
+    const response = await axios.post(`${API_BASE_URL}/articles/extract-newsapi`);
+    return response.data;
+  } catch (error) {
+    throw new Error(error.response?.data?.detail || 'Failed to extract from NewsAPI.org');
+  }
+};
+
+export const getNewsAPIRequests = async () => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/articles/newsapi-requests`);
+    return response.data;
+  } catch (error) {
+    throw new Error(error.response?.data?.detail || 'Failed to get NewsAPI.org request status');
+  }
+};
+
 export const cancelExtraction = async () => {
   try {
     const response = await axios.post(`${API_BASE_URL}/articles/cancel-extraction`);

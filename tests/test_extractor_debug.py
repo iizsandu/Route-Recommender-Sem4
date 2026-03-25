@@ -38,7 +38,7 @@ sys.path.insert(0, BACKEND_DIR)
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, 'extractor_debug')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-SOURCES = ['google', 'toi', 'newsdata', 'ndtv', 'hindu', 'indianexpress']
+SOURCES = ['google', 'toi', 'newsdata', 'ndtv', 'hindu', 'indianexpress', 'newsapi']
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -221,6 +221,22 @@ def run_indianexpress(args):
     return articles
 
 
+def run_newsapi(args):
+    from newsapi_extractor import NewsAPIExtractor
+
+    extractor = NewsAPIExtractor()
+    keywords_override = args.keywords.split(',') if args.keywords else None
+    if keywords_override:
+        extractor.keywords = keywords_override
+
+    # Use limit as max_requests if set, else default to 3 for debug
+    max_requests = args.limit if args.limit > 0 else 3
+    print(f"\n  NewsAPI.org: using max_requests={max_requests} for this debug run.")
+
+    articles = extractor.extract(max_requests=max_requests, seen_urls=set())
+    return articles
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 RUNNERS = {
@@ -230,6 +246,7 @@ RUNNERS = {
     'ndtv':          run_ndtv,
     'hindu':         run_hindu,
     'indianexpress': run_indianexpress,
+    'newsapi':       run_newsapi,
 }
 
 SOURCE_LABELS = {
@@ -239,6 +256,7 @@ SOURCE_LABELS = {
     'ndtv':          'NDTV',
     'hindu':         'The Hindu',
     'indianexpress': 'Indian Express',
+    'newsapi':       'NewsAPI.org',
 }
 
 

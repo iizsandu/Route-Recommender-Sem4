@@ -10,8 +10,10 @@ import {
   extractHindu,
   extractNDTV,
   extractIndianExpress,
+  extractNewsAPI,
   cancelExtraction,
   getNewsDataCredits,
+  getNewsAPIRequests,
   getArticles, 
   getArticles2, 
   getArticleStats 
@@ -27,11 +29,12 @@ import './ArticleExtractor.css';
 // The API should return an array of { url, date: "YYYY-MM-DD", source } objects.
 // Then pass `chartDocs` instead of `mockData` into buildChartData().
 
-const CHART_SOURCES = ['All Sources', 'Google News', 'Times of India', 'NDTV', 'The Hindu', 'Indian Express', 'NewsData.io'];
+const CHART_SOURCES = ['All Sources', 'Google News', 'Times of India', 'NDTV', 'The Hindu', 'Indian Express', 'NewsData.io', 'NewsAPI.org'];
 const CHART_GRANULARITIES = [{ label: 'Week', value: 'week' }, { label: 'Month', value: 'month' }, { label: 'Year', value: 'year' }];
 const SOURCE_COLORS = {
   'Google News': '#3498db', 'Times of India': '#e74c3c', 'NDTV': '#2ecc71',
-  'The Hindu': '#9b59b6', 'Indian Express': '#f39c12', 'NewsData.io': '#1abc9c', 'All Sources': '#3498db',
+  'The Hindu': '#9b59b6', 'Indian Express': '#f39c12', 'NewsData.io': '#1abc9c',
+  'NewsAPI.org': '#e67e22', 'All Sources': '#3498db',
 };
 
 function getBucketKey(dateStr, granularity) {
@@ -74,6 +77,7 @@ function ArticleExtractor() {
   const [extractionSummary, setExtractionSummary] = useState(null);
   const [viewCollection, setViewCollection] = useState('articles2');
   const [newsDataCredits, setNewsDataCredits] = useState(null);
+  const [newsApiRequests, setNewsApiRequests] = useState(null);
 
   // Chart state
   const [chartSource, setChartSource] = useState('All Sources');
@@ -123,6 +127,7 @@ function ArticleExtractor() {
     loadArticles();
     loadStats();
     loadNewsDataCredits();
+    loadNewsAPIRequests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewCollection]);
 
@@ -134,6 +139,17 @@ function ArticleExtractor() {
       }
     } catch (err) {
       console.error('Failed to load NewsData credits:', err);
+    }
+  };
+
+  const loadNewsAPIRequests = async () => {
+    try {
+      const data = await getNewsAPIRequests();
+      if (data.success) {
+        setNewsApiRequests(data.requests);
+      }
+    } catch (err) {
+      console.error('Failed to load NewsAPI.org request status:', err);
     }
   };
 
@@ -202,6 +218,10 @@ function ArticleExtractor() {
             setSuccessMessage('Starting NewsData.io extraction (200 credits)...');
             result = await extractNewsData();
             break;
+          case 'newsapi':
+            setSuccessMessage('Starting NewsAPI.org extraction (100 requests)...');
+            result = await extractNewsAPI();
+            break;
           case 'all':
           default:
             setSuccessMessage('Starting extraction using ALL methods... Auto-save every 50 articles.');
@@ -238,6 +258,7 @@ function ArticleExtractor() {
           await loadArticles();
           await loadStats();
           await loadNewsDataCredits();
+          await loadNewsAPIRequests();
         } else {
           setError(result.message || 'Failed to extract articles');
         }
@@ -267,7 +288,7 @@ function ArticleExtractor() {
             onChange={(e) => setExtractionMethod(e.target.value)}
             disabled={loading}
           >
-            <option value="all">All Methods (6 sources)</option>
+            <option value="all">All Methods (7 sources)</option>
             <option value="google">Google News</option>
             <option value="toi">Times of India</option>
             <option value="hindu">The Hindu</option>
@@ -276,6 +297,10 @@ function ArticleExtractor() {
             <option value="newsdata">
               NewsData.io
               {newsDataCredits && ` (${newsDataCredits.credits_remaining}/${newsDataCredits.max_credits} credits)`}
+            </option>
+            <option value="newsapi">
+              NewsAPI.org
+              {newsApiRequests && ` (${newsApiRequests.requests_remaining}/${newsApiRequests.max_requests} requests)`}
             </option>
           </select>
         </div>
@@ -304,6 +329,28 @@ function ArticleExtractor() {
             {newsDataCredits.credits_remaining <= 0 && (
               <div className="credit-warning">
                 No daily credits left. Please wait for reset.
+              </div>
+            )}
+          </div>
+        )}
+
+        {extractionMethod === 'newsapi' && newsApiRequests && (
+          <div className="credit-info">
+            <div className="credit-status">
+              <span className="credit-label">Daily Requests:</span>
+              <span className="credit-value">{newsApiRequests.requests_remaining}/{newsApiRequests.max_requests}</span>
+            </div>
+            <div className="credit-status">
+              <span className="credit-label">Daily Reset In:</span>
+              <span className="credit-value">{newsApiRequests.hours_until_reset}h {newsApiRequests.minutes_until_reset}m</span>
+            </div>
+            <div className="credit-status">
+              <span className="credit-label">Articles per request:</span>
+              <span className="credit-value">{newsApiRequests.articles_per_request} (free tier max)</span>
+            </div>
+            {newsApiRequests.requests_remaining <= 0 && (
+              <div className="credit-warning">
+                No daily requests left. Please wait for reset.
               </div>
             )}
           </div>
