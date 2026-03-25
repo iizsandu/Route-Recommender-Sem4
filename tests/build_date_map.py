@@ -140,24 +140,36 @@ def fallback_date_from_html(html: str) -> tuple[datetime | None, str]:
         if d:
             return d, 'classed-element'
 
-    # 6 & 7. Full visible-text scan — first 5000 chars only
-    # Publish date is always in the article header, not deep in the body.
-    full_text = soup.get_text(' ')
-    head_text = full_text[:5000]
+    # 5b. <span>/<div> adjacent to a calendar/clock icon
+    for icon in soup.find_all('i', attrs={'class': re.compile(r'fa-(calendar|clock|time)', re.I)}):
+        parent = icon.parent
+        if parent:
+            d = _first_date_in(parent.get_text(' ', strip=True))
+            if d:
+                return d, 'calendar-icon-sibling'
+            sib = parent.find_next_sibling()
+            if sib:
+                d = _first_date_in(sib.get_text(' ', strip=True))
+                if d:
+                    return d, 'calendar-icon-sibling'
 
-    # 6. Near a publish keyword
-    for m in re.finditer(
-        r'(?:published|updated|posted|date)[^\n]{0,60}',
-        head_text, re.IGNORECASE
-    ):
-        d = _first_date_in(m.group())
+    # 6. First date after the article title (final fallback)
+    title_tag = (
+        soup.find('h1') or
+        soup.find(attrs={'class': re.compile(r'title|headline|article-title', re.I)})
+    )
+    if title_tag:
+        post_title_text = []
+        for el in title_tag.find_all_next(string=True):
+            chunk = el.strip()
+            if chunk:
+                post_title_text.append(chunk)
+            if sum(len(c) for c in post_title_text) > 500:
+                break
+        window = ' '.join(post_title_text)
+        d = _first_date_in(window)
         if d:
-            return d, 'fullpage-keyword'
-
-    # 7. Any date pattern in the first 5000 chars
-    d = _first_date_in(head_text)
-    if d:
-        return d, 'fullpage-early'
+            return d, 'post-title-scan'
 
     return None, 'not_found'
 

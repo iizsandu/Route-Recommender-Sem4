@@ -45,6 +45,10 @@ class UnifiedExtractor:
             'Indian Express': 0,
             'NewsData.io': 0,
         }
+        # Persistent DB connection — created once, reused for all saves
+        self.db = DBHandler(collection_name="articles2")
+        if not self.db.connected:
+            print("  WARNING: MongoDB not connected — articles will only be saved to JSON")
 
     def save_progress(self):
         try:
@@ -58,13 +62,11 @@ class UnifiedExtractor:
             with open(self.progress_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, default=str)
 
-            if self.all_articles:
-                db = DBHandler(collection_name="articles2")
-                if db.connected:
-                    result = db.save_articles(self.all_articles)
-                    print(f"\n  Saved to DB: {result['inserted']} new, {result['duplicates']} duplicates")
-                    self.all_articles = []
-                    self.save_counter = 0
+            if self.all_articles and self.db.connected:
+                result = self.db.save_articles(self.all_articles)
+                print(f"\n  Saved to DB: {result['inserted']} new, {result['duplicates']} duplicates")
+                self.all_articles = []
+                self.save_counter = 0
 
             print(f"  Progress saved: {len(self.seen_urls)} total URLs processed")
 
