@@ -13,3 +13,4 @@ python-dotenv==1.0.0
 feedparser==6.0.11
 googlenewsdecoder
 gnews
+newsapi-python

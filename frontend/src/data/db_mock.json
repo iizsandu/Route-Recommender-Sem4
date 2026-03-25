@@ -117,5 +117,18 @@
   { "url": "https://newsdata.io/article-013", "date": "2024-11-15", "source": "NewsData.io" },
   { "url": "https://newsdata.io/article-014", "date": "2024-12-03", "source": "NewsData.io" },
   { "url": "https://newsdata.io/article-015", "date": "2025-01-14", "source": "NewsData.io" },
-  { "url": "https://newsdata.io/article-016", "date": "2025-02-25", "source": "NewsData.io" }
+  { "url": "https://newsdata.io/article-016", "date": "2025-02-25", "source": "NewsData.io" },
+
+  { "url": "https://newsapi.org/article-001", "date": "2024-01-12", "source": "NewsAPI.org" },
+  { "url": "https://newsapi.org/article-002", "date": "2024-02-08", "source": "NewsAPI.org" },
+  { "url": "https://newsapi.org/article-003", "date": "2024-03-19", "source": "NewsAPI.org" },
+  { "url": "https://newsapi.org/article-004", "date": "2024-04-27", "source": "NewsAPI.org" },
+  { "url": "https://newsapi.org/article-005", "date": "2024-06-05", "source": "NewsAPI.org" },
+  { "url": "https://newsapi.org/article-006", "date": "2024-07-14", "source": "NewsAPI.org" },
+  { "url": "https://newsapi.org/article-007", "date": "2024-08-22", "source": "NewsAPI.org" },
+  { "url": "https://newsapi.org/article-008", "date": "2024-09-30", "source": "NewsAPI.org" },
+  { "url": "https://newsapi.org/article-009", "date": "2024-11-08", "source": "NewsAPI.org" },
+  { "url": "https://newsapi.org/article-010", "date": "2024-12-16", "source": "NewsAPI.org" },
+  { "url": "https://newsapi.org/article-011", "date": "2025-01-24", "source": "NewsAPI.org" },
+  { "url": "https://newsapi.org/article-012", "date": "2025-03-04", "source": "NewsAPI.org" }
 ]

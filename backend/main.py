@@ -50,6 +50,7 @@ async def get_article_stats():
             "NDTV":            col.count_documents({"source": "NDTV"}),
             "Indian Express":  col.count_documents({"source": "Indian Express"}),
             "NewsData.io":     col.count_documents({"source": re.compile(r"^NewsData\.io")}),
+            "NewsAPI.org":     col.count_documents({"source": "NewsAPI.org"}),
         }
 
         return {"total": total, "breakdown": breakdown}
@@ -252,6 +253,65 @@ async def get_newsdata_credits():
         from newsdata_credit_manager import credit_manager
         status = credit_manager.get_status()
         return {"success": True, "credits": status}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/articles/extract-newsapi")
+async def extract_newsapi_only(max_requests: Optional[int] = 100):
+    try:
+        from unified_extractor import UnifiedExtractor
+        from newsapi_request_manager import newsapi_request_manager
+
+        status = newsapi_request_manager.get_status()
+        if not status['can_use']:
+            return {
+                "success": False,
+                "message": f"No daily requests left. Reset in {status['hours_until_reset']}h {status['minutes_until_reset']}m",
+                "stats": {
+                    "method": "NewsAPI.org",
+                    "requests_remaining": 0,
+                    "hours_until_reset": status['hours_until_reset'],
+                    "minutes_until_reset": status['minutes_until_reset'],
+                }
+            }
+
+        available = status['requests_remaining']
+        if max_requests > available:
+            max_requests = available
+
+        _cancel_event.clear()
+        extractor = UnifiedExtractor(auto_save_interval=50, cancel_event=_cancel_event)
+        extractor.load_progress()
+        count = extractor.extract_from_newsapi(max_requests=max_requests)
+        extractor.save_progress()
+
+        final_status = newsapi_request_manager.get_status()
+        extractor._print_summary()
+        return {
+            "success": True,
+            "message": "NewsAPI.org extraction completed",
+            "stats": {
+                "method": "NewsAPI.org",
+                "new_articles": count,
+                "total_urls": len(extractor.seen_urls),
+                "requests_used": max_requests,
+                "requests_remaining": final_status['requests_remaining'],
+                "hours_until_reset": final_status['hours_until_reset'],
+                "minutes_until_reset": final_status['minutes_until_reset'],
+                "source_breakdown": extractor.source_counts,
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/articles/newsapi-requests")
+async def get_newsapi_requests():
+    try:
+        from newsapi_request_manager import newsapi_request_manager
+        status = newsapi_request_manager.get_status()
+        return {"success": True, "requests": status}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

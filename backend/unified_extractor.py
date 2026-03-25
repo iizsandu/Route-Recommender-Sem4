@@ -10,6 +10,7 @@ from newsdata_extractor import NewsDataExtractor
 from hindu_extractor import HinduExtractor
 from ndtv_extractor import NDTVExtractor
 from indian_express_extractor import IndianExpressExtractor
+from newsapi_extractor import NewsAPIExtractor
 from db_handler import DBHandler
 from datetime import datetime
 import time
@@ -42,6 +43,7 @@ class UnifiedExtractor:
         self.hindu_extractor = HinduExtractor()
         self.ndtv_extractor = NDTVExtractor()
         self.indian_express_extractor = IndianExpressExtractor()
+        self.newsapi_extractor = NewsAPIExtractor()
         self.auto_save_interval = auto_save_interval
         self.cancel_event = cancel_event
         self.all_articles = []
@@ -58,6 +60,7 @@ class UnifiedExtractor:
             'NDTV': 0,
             'Indian Express': 0,
             'NewsData.io': 0,
+            'NewsAPI.org': 0,
         }
         # Persistent DB connection — created once, reused for all saves
         self.db = DBHandler(collection_name="articles2")
@@ -230,6 +233,29 @@ class UnifiedExtractor:
             self.error_count += 1
             return 0
 
+    def extract_from_newsapi(self, max_requests: int = 100) -> int:
+        print(f"\n{'='*70}")
+        print(f"  NewsAPI.org Extraction")
+        print(f"{'='*70}")
+        try:
+            articles = self.newsapi_extractor.extract(
+                max_requests=max_requests,
+                delay_between_calls=1.0,
+                seen_urls=set(self.seen_urls),
+            )
+            count = self._ingest_articles(articles)
+            print(f"  NewsAPI.org: {count} new articles")
+            self.error_count = 0
+            return count
+        except ValueError as e:
+            print(f"  NewsAPI.org configuration error: {e}")
+            self.error_count += 1
+            return 0
+        except Exception as e:
+            print(f"  NewsAPI.org error: {str(e)[:100]}")
+            self.error_count += 1
+            return 0
+
     def extract_from_newsdata(self, max_credits: int = 200) -> int:
         print(f"\n{'='*70}")
         print(f"  NewsData.io Extraction")
@@ -312,26 +338,32 @@ class UnifiedExtractor:
                     print(f"\n  Too many consecutive errors ({self.error_count}). Stopping.")
                     break
 
-                print(f"\n  [1/6] Google News")
+                print(f"\n  [1/7] Google News")
                 total_extracted += self.extract_from_google_news(google_news_keywords)
 
-                print(f"\n  [2/6] Times of India")
+                print(f"\n  [2/7] Times of India")
                 total_extracted += self.extract_from_times_of_india()
 
-                print(f"\n  [3/6] The Hindu")
+                print(f"\n  [3/7] The Hindu")
                 total_extracted += self.extract_from_hindu()
 
-                print(f"\n  [4/6] NDTV")
+                print(f"\n  [4/7] NDTV")
                 total_extracted += self.extract_from_ndtv()
 
-                print(f"\n  [5/6] Indian Express")
+                print(f"\n  [5/7] Indian Express")
                 total_extracted += self.extract_from_indian_express()
 
                 if cycle_count == 1:
-                    print(f"\n  [6/6] NewsData.io")
+                    print(f"\n  [6/7] NewsData.io")
                     total_extracted += self.extract_from_newsdata(max_credits=200)
                 else:
-                    print(f"\n  [6/6] NewsData.io (skipped - already used in cycle 1)")
+                    print(f"\n  [6/7] NewsData.io (skipped - already used in cycle 1)")
+
+                if cycle_count == 1:
+                    print(f"\n  [7/7] NewsAPI.org")
+                    total_extracted += self.extract_from_newsapi(max_requests=100)
+                else:
+                    print(f"\n  [7/7] NewsAPI.org (skipped - already used in cycle 1)")
 
                 cycle_new = len(self.seen_urls) - cycle_start
 
