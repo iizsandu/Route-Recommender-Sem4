@@ -4,12 +4,15 @@ Free tier limits:
   - 200 credits / 24 hours  (daily budget)
   - 30 requests / 15 minutes (rate window)
 Automatically waits out the 15-min window when exhausted, then resumes.
+fetch_metadata() fetches article stubs from the API.
+extract() fetches metadata then pulls full text for each article — same contract as all other extractors.
 """
 import requests
 import time
 from datetime import datetime
 from typing import List, Dict, Optional
 from newsdata_credit_manager import credit_manager
+from article_text_extractor import get_extractor
 import os
 from dotenv import load_dotenv
 
@@ -23,6 +26,7 @@ class NewsDataExtractor:
             raise ValueError("NewsData.io API key not found. Set NEWSDATA_API_KEY in .env")
 
         self.base_url = "https://newsdata.io/api/1/latest"
+        self.text_extractor = get_extractor()
 
         self.keywords = [
             "Delhi crime", "Delhi murder", "Delhi robbery", "Delhi theft",
@@ -32,16 +36,17 @@ class NewsDataExtractor:
             "New Delhi crime", "NCR crime", "Noida crime", "Gurgaon crime",
         ]
 
-    def fetch_articles(
+    def fetch_metadata(
         self,
         max_credits: int = 200,
         articles_per_credit: int = 10,
         delay_between_calls: float = 1.5,
     ) -> List[Dict]:
         """
-        Fetch articles from NewsData.io.
+        Fetch article stubs (metadata only, no full text) from NewsData.io API.
         Respects both the daily budget and the 30 req/15 min window.
         Automatically sleeps when the window is full and resumes after.
+        Returns articles with full_text_extracted=False — call extract() to get full text.
         """
         status = credit_manager.print_status()
 
@@ -150,3 +155,58 @@ class NewsDataExtractor:
         final = credit_manager.print_status()
         print(f"\n  NewsData.io done — {credits_used} credits used, {len(all_articles)} articles fetched")
         return all_articles
+
+    def extract(
+        self,
+        max_credits: int = 200,
+        articles_per_credit: int = 10,
+        delay_between_calls: float = 1.5,
+        seen_urls: set = None,
+    ) -> List[Dict]:
+        """
+        Full extraction: fetch metadata from API, then pull full text for each article.
+        Same contract as all other extractors — returns fully populated articles.
+        Articles where text extraction fails are still returned with full_text_extracted=False
+        so _ingest_articles() can filter them uniformly.
+        """
+        if seen_urls is None:
+            seen_urls = set()
+
+        stubs = self.fetch_metadata(
+            max_credits=max_credits,
+            articles_per_credit=articles_per_credit,
+            delay_between_calls=delay_between_calls,
+        )
+
+        print(f"\n  Extracting full text from {len(stubs)} NewsData.io articles...")
+        articles = []
+
+        for i, stub in enumerate(stubs, 1):
+            url = self.text_extractor.clean_url(stub.get('url', ''))
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            try:
+                full_content = self.text_extractor.extract(url, source='NewsData.io', keyword='crime')
+                stub['url'] = full_content['url']
+                stub['title'] = full_content['title'] or stub.get('title', '')
+                stub['text'] = full_content['text']
+                stub['summary'] = full_content['summary']
+                stub['full_text_extracted'] = full_content['full_text_extracted']
+                stub['extracted_at'] = full_content['extracted_at']
+            except Exception:
+                stub['text'] = stub.get('description', '')
+                stub['full_text_extracted'] = False
+
+            articles.append(stub)
+
+            if i % 100 == 0:
+                print(f"  Progress: {i}/{len(stubs)} processed")
+
+        text_ok = sum(1 for a in articles if a.get('full_text_extracted'))
+        print(f"\n{'='*60}")
+        print(f"✓ NewsData.io Total : {len(articles)} articles")
+        print(f"✓ Text found        : {text_ok}/{len(articles)}")
+        print(f"{'='*60}")
+        return articles
