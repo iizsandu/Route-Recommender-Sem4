@@ -20,8 +20,8 @@ class NDTVExtractor:
         }
         self.crime_keywords = [
             'crime', 'murder', 'robbery', 'theft', 'assault', 'rape', 'kidnapping',
-            'arrested', 'held', 'killed', 'dead', 'body', 'attack', 'shot', 'stabbed',
-            'police', 'accused', 'victim', 'gang', 'fraud', 'scam', 'burglary', 'loot',
+            'arrested', 'killed', 'dead', 'body', 'attack', 'shot', 'stabbed',
+            'accused', 'victim', 'gang', 'fraud', 'scam', 'burglary', 'loot',
             'violence', 'shoot', 'firing', 'encounter', 'custody', 'detained',
         ]
         self.delhi_keywords = [
