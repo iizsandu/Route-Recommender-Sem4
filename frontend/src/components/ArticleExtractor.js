@@ -1,4 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
+} from 'recharts';
 import { 
   extractArticles, 
   extractGoogleNews,
@@ -13,7 +16,52 @@ import {
   getArticles2, 
   getArticleStats 
 } from '../services/api';
+import mockData from '../data/db_mock.json';
 import './ArticleExtractor.css';
+
+// ── Chart helpers ─────────────────────────────────────────────────────────────
+// DATA SOURCE: currently reads from src/data/db_mock.json (static import).
+// To connect MongoDB, replace `mockData` with an API response:
+//   const [chartDocs, setChartDocs] = useState([]);
+//   useEffect(() => { fetch('/articles/date-stats').then(r=>r.json()).then(setChartDocs) }, []);
+// The API should return an array of { url, date: "YYYY-MM-DD", source } objects.
+// Then pass `chartDocs` instead of `mockData` into buildChartData().
+
+const CHART_SOURCES = ['All Sources', 'Google News', 'Times of India', 'NDTV', 'The Hindu', 'Indian Express', 'NewsData.io'];
+const CHART_GRANULARITIES = [{ label: 'Week', value: 'week' }, { label: 'Month', value: 'month' }, { label: 'Year', value: 'year' }];
+const SOURCE_COLORS = {
+  'Google News': '#3498db', 'Times of India': '#e74c3c', 'NDTV': '#2ecc71',
+  'The Hindu': '#9b59b6', 'Indian Express': '#f39c12', 'NewsData.io': '#1abc9c', 'All Sources': '#3498db',
+};
+
+function getBucketKey(dateStr, granularity) {
+  const d = new Date(dateStr);
+  if (isNaN(d)) return null;
+  if (granularity === 'year') return `${d.getFullYear()}`;
+  if (granularity === 'month') return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const jan1 = new Date(d.getFullYear(), 0, 1);
+  const week = Math.ceil(((d - jan1) / 86400000 + jan1.getDay() + 1) / 7);
+  return `${d.getFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+function buildChartData(docs, granularity) {
+  const counts = {};
+  for (const doc of docs) {
+    const key = getBucketKey(doc.date, granularity);
+    if (key) counts[key] = (counts[key] || 0) + 1;
+  }
+  return Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)).map(([label, count]) => ({ label, count }));
+}
+
+function ChartTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{ background: '#2c3e50', color: '#fff', padding: '8px 14px', borderRadius: 6, fontSize: 13 }}>
+      <p style={{ margin: '0 0 2px', fontWeight: 600 }}>{label}</p>
+      <p style={{ margin: 0, opacity: 0.85 }}>{payload[0].value} article{payload[0].value !== 1 ? 's' : ''}</p>
+    </div>
+  );
+}
 
 function ArticleExtractor() {
   const [articles, setArticles] = useState([]);
@@ -26,6 +74,50 @@ function ArticleExtractor() {
   const [extractionSummary, setExtractionSummary] = useState(null);
   const [viewCollection, setViewCollection] = useState('articles2');
   const [newsDataCredits, setNewsDataCredits] = useState(null);
+
+  // Chart state
+  const [chartSource, setChartSource] = useState('All Sources');
+  const [chartGranularity, setChartGranularity] = useState('month');
+  const chartFiltered = useMemo(() =>
+    chartSource === 'All Sources' ? mockData : mockData.filter(d => d.source === chartSource),
+    [chartSource]
+  );
+  const chartData = useMemo(() => buildChartData(chartFiltered, chartGranularity), [chartFiltered, chartGranularity]);
+
+  // Resizable panel
+  const [chartWidth, setChartWidth] = useState(360);
+  const isResizing = useRef(false);
+  const startX = useRef(0);
+  const startWidth = useRef(0);
+
+  const onMouseDown = useCallback((e) => {
+    isResizing.current = true;
+    startX.current = e.clientX;
+    startWidth.current = chartWidth;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [chartWidth]);
+
+  useEffect(() => {
+    const onMouseMove = (e) => {
+      if (!isResizing.current) return;
+      const delta = startX.current - e.clientX; // dragging left = wider chart
+      const newWidth = Math.min(900, Math.max(260, startWidth.current + delta));
+      setChartWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      if (!isResizing.current) return;
+      isResizing.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
 
   useEffect(() => {
     loadArticles();
@@ -158,8 +250,11 @@ function ArticleExtractor() {
     };
 
   return (
-    <div className="article-extractor">
-      <div className="extractor-header">
+    <div className="article-extractor-page">
+
+      {/* ── Left column: existing extractor UI ── */}
+      <div className="article-extractor">
+        <div className="extractor-header">
         <h2>Crime Article Extractor</h2>
         <p>Extract crime news articles from multiple sources</p>
       </div>
@@ -328,6 +423,83 @@ function ArticleExtractor() {
           </div>
         )}
       </div>
+      </div>
+
+      {/* ── Drag handle ── */}
+      <div className="panel-resizer" onMouseDown={onMouseDown} title="Drag to resize" />
+
+      {/* ── Right column: date distribution chart ── */}
+      <div className="chart-panel" style={{ width: chartWidth, minWidth: chartWidth }}>
+        <h3 className="chart-panel-title">Article Date Distribution</h3>
+        <p className="chart-panel-sub">Coverage per source in the database</p>
+
+        {/* Source selector */}
+        <div className="chart-control-group">
+          <span className="chart-control-label">Source</span>
+          <div className="chart-source-btns">
+            {CHART_SOURCES.map(src => (
+              <button
+                key={src}
+                className={`chart-src-btn ${chartSource === src ? 'active' : ''}`}
+                style={chartSource === src ? { background: SOURCE_COLORS[src], borderColor: SOURCE_COLORS[src] } : {}}
+                onClick={() => setChartSource(src)}
+              >
+                {src}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Granularity selector */}
+        <div className="chart-control-group">
+          <span className="chart-control-label">Group by</span>
+          <div className="chart-gran-btns">
+            {CHART_GRANULARITIES.map(g => (
+              <button
+                key={g.value}
+                className={`chart-gran-btn ${chartGranularity === g.value ? 'active' : ''}`}
+                onClick={() => setChartGranularity(g.value)}
+              >
+                {g.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Chart */}
+        <div className="chart-area">
+          {chartData.length === 0
+            ? <p className="chart-no-data">No data for this source.</p>
+            : (
+              <ResponsiveContainer width="100%" height={320}>
+                <BarChart data={chartData} margin={{ top: 8, right: 10, left: -10, bottom: 55 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                  <XAxis dataKey="label" angle={-45} textAnchor="end" tick={{ fontSize: 10, fill: '#666' }} interval={0} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#666' }} />
+                  <Tooltip content={<ChartTooltip />} />
+                  <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+                    {chartData.map((_, i) => (
+                      <Cell key={i} fill={SOURCE_COLORS[chartSource] || '#3498db'} fillOpacity={0.85} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )
+          }
+        </div>
+
+        {/*
+          HOW TO CONNECT MONGODB:
+          1. Add backend route GET /articles/date-stats returning [{ url, date: "YYYY-MM-DD", source }]
+          2. Add getDateStats() to api.js
+          3. Replace `import mockData` with a useEffect that calls getDateStats() into state
+          4. Pass that state variable to buildChartData() instead of mockData
+        */}
+        <p className="chart-mock-note">
+          Mock data shown — connect MongoDB to see real coverage
+        </p>
+      </div>
+
     </div>
   );
 }

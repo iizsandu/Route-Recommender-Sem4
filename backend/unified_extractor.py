@@ -16,7 +16,22 @@ import time
 import json
 import os
 from typing import List, Dict
-from article_text_extractor import get_extractor
+
+
+_TRACKING_PARAMS = [
+    '&ved=', '&usg=', '&sa=', '&source=', '&cd=', '&cad=',
+    '&utm_source=', '&utm_medium=', '&utm_campaign=',
+    '&fbclid=', '&gclid='
+]
+
+
+def _clean_url(url: str) -> str:
+    if not url:
+        return url
+    for param in _TRACKING_PARAMS:
+        if param in url:
+            url = url.split(param)[0]
+    return url
 
 
 class UnifiedExtractor:
@@ -27,7 +42,6 @@ class UnifiedExtractor:
         self.hindu_extractor = HinduExtractor()
         self.ndtv_extractor = NDTVExtractor()
         self.indian_express_extractor = IndianExpressExtractor()
-        self.text_extractor = get_extractor()
         self.auto_save_interval = auto_save_interval
         self.cancel_event = cancel_event
         self.all_articles = []
@@ -104,7 +118,7 @@ class UnifiedExtractor:
                 skipped_no_text += 1
                 continue
 
-            url = self.text_extractor.clean_url(article.get('url', ''))
+            url = _clean_url(article.get('url', ''))
             if url and url not in self.seen_urls:
                 self.seen_urls.add(url)
                 article['url'] = url
@@ -220,68 +234,25 @@ class UnifiedExtractor:
         print(f"\n{'='*70}")
         print(f"  NewsData.io Extraction")
         print(f"{'='*70}")
-
-        new_count = 0
         try:
-            articles = self.newsdata_extractor.fetch_articles(
+            articles = self.newsdata_extractor.extract(
                 max_credits=max_credits,
                 articles_per_credit=10,
-                delay_between_calls=1.5
+                delay_between_calls=1.5,
+                seen_urls=set(self.seen_urls),
             )
-
-            print(f"\n  Extracting full text from {len(articles)} articles...")
-
-            for i, article in enumerate(articles, 1):
-                if self.cancel_event and self.cancel_event.is_set():
-                    print(f"\n  Cancellation requested. Saving progress...")
-                    self.save_progress()
-                    return new_count
-
-                url = self.text_extractor.clean_url(article.get('url', ''))
-
-                if url and url not in self.seen_urls:
-                    try:
-                        full_content = self.text_extractor.extract(url, source='NewsData.io', keyword='crime')
-                        article['url'] = full_content['url']
-                        article['title'] = full_content['title'] or article.get('title', '')
-                        article['text'] = full_content['text']
-                        article['summary'] = full_content['summary']
-                        article['full_text_extracted'] = full_content['full_text_extracted']
-                        article['extracted_at'] = full_content['extracted_at']
-                    except Exception:
-                        article['text'] = article.get('description', '')
-                        article['full_text_extracted'] = False
-
-                    if not article.get('full_text_extracted'):
-                        continue
-
-                    self.seen_urls.add(url)
-                    self.all_articles.append(article)
-                    new_count += 1
-                    self.save_counter += 1
-                    self.source_counts['NewsData.io'] += 1
-
-                    if self.save_counter >= self.auto_save_interval:
-                        print(f"\n  Auto-saving at {new_count} articles...")
-                        self.save_progress()
-
-                    if i % 100 == 0:
-                        print(f"  Progress: {i}/{len(articles)} processed, {new_count} new")
-
-            if self.all_articles:
-                self.save_progress()
-
-            print(f"  NewsData.io: {new_count} new articles")
+            count = self._ingest_articles(articles)
+            print(f"  NewsData.io: {count} new articles")
             self.error_count = 0
-
+            return count
         except ValueError as e:
             print(f"  NewsData.io configuration error: {e}")
             self.error_count += 1
+            return 0
         except Exception as e:
             print(f"  NewsData.io error: {str(e)[:100]}")
             self.error_count += 1
-
-        return new_count
+            return 0
 
     # ── Main loop ──────────────────────────────────────────────────────────────
 

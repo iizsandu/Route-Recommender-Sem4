@@ -1,0 +1,158 @@
+.analytics-container {
+  padding: 30px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.analytics-header h2 {
+  margin: 0 0 6px 0;
+  font-size: 22px;
+  color: #2c3e50;
+}
+
+.analytics-subtitle {
+  color: #666;
+  font-size: 14px;
+  margin: 0 0 24px 0;
+}
+
+/* Controls */
+.controls-row {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.control-group label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #888;
+  margin-bottom: 8px;
+}
+
+.source-buttons,
+.granularity-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.source-btn,
+.gran-btn {
+  padding: 7px 16px;
+  border: 2px solid #ddd;
+  border-radius: 20px;
+  background: white;
+  color: #444;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.source-btn:hover,
+.gran-btn:hover {
+  border-color: #aaa;
+  color: #222;
+}
+
+.source-btn.active,
+.gran-btn.active {
+  color: white;
+  border-color: transparent;
+}
+
+.gran-btn.active {
+  background: #2c3e50;
+}
+
+/* Stats strip */
+.stats-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  padding: 12px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 110px;
+}
+
+.stat-card.highlight {
+  background: #eaf4ff;
+  border-color: #b3d7ff;
+}
+
+.stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #2c3e50;
+}
+
+.stat-label {
+  font-size: 11px;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/* Chart */
+.chart-wrapper {
+  background: white;
+  border: 1px solid #e9ecef;
+  border-radius: 10px;
+  padding: 20px 10px 10px 10px;
+}
+
+.no-data {
+  height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #aaa;
+  font-size: 16px;
+}
+
+/* Tooltip */
+.chart-tooltip {
+  background: #2c3e50;
+  color: white;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.tooltip-label {
+  margin: 0 0 2px 0;
+  font-weight: 600;
+}
+
+.tooltip-value {
+  margin: 0;
+  opacity: 0.85;
+}
+
+/* Mock notice */
+.mock-notice {
+  margin-top: 16px;
+  font-size: 12px;
+  color: #999;
+  text-align: center;
+}
+
+.mock-notice code {
+  background: #f0f0f0;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+}

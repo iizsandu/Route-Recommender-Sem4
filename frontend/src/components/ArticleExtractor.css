@@ -405,3 +405,142 @@
   font-size: 12px;
   font-weight: 500;
 }
+
+/* ── Two-column page layout ── */
+.article-extractor-page {
+  display: flex;
+  gap: 0;
+  align-items: flex-start;
+  min-height: calc(100vh - 80px);
+}
+
+.article-extractor-page .article-extractor {
+  flex: 1 1 0;
+  min-width: 0;
+  border-right: none;
+  padding-right: 0;
+}
+
+/* Drag-to-resize divider */
+.panel-resizer {
+  width: 6px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: #e9ecef;
+  transition: background 0.15s;
+  position: relative;
+}
+
+.panel-resizer:hover,
+.panel-resizer:active {
+  background: #3498db;
+}
+
+.panel-resizer::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 40px;
+  border-left: 1px dashed #aaa;
+  border-right: 1px dashed #aaa;
+}
+
+/* ── Right chart panel ── */
+.chart-panel {
+  flex-shrink: 0;
+  padding: 24px 20px;
+  background: #fafafa;
+  border-left: 1px solid #e9ecef;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.chart-panel-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #2c3e50;
+  margin: 0 0 4px 0;
+}
+
+.chart-panel-sub {
+  font-size: 12px;
+  color: #999;
+  margin: 0 0 18px 0;
+}
+
+.chart-control-group {
+  margin-bottom: 14px;
+}
+
+.chart-control-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #aaa;
+  margin-bottom: 7px;
+}
+
+.chart-source-btns,
+.chart-gran-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chart-src-btn,
+.chart-gran-btn {
+  padding: 5px 11px;
+  border: 1.5px solid #ddd;
+  border-radius: 14px;
+  background: white;
+  color: #555;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.chart-src-btn:hover,
+.chart-gran-btn:hover {
+  border-color: #aaa;
+}
+
+.chart-src-btn.active,
+.chart-gran-btn.active {
+  color: white;
+  border-color: transparent;
+}
+
+.chart-gran-btn.active {
+  background: #2c3e50;
+}
+
+.chart-area {
+  background: white;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  padding: 12px 4px 4px 4px;
+  margin-top: 14px;
+}
+
+.chart-no-data {
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ccc;
+  font-size: 14px;
+}
+
+.chart-mock-note {
+  margin-top: 10px;
+  font-size: 11px;
+  color: #bbb;
+  text-align: center;
+}

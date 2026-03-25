@@ -26,7 +26,8 @@ function App() {
         </div>
       </div>
 
-      {activeTab === 'articles' ? <ArticleExtractor /> : <YouTubeExtractor />}
+      {activeTab === 'articles' && <ArticleExtractor />}
+      {activeTab === 'youtube' && <YouTubeExtractor />}
     </div>
   );
 }
